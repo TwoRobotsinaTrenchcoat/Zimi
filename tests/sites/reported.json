@@ -1,5 +1,5 @@
 {
-  "_": "Every site a user reports goes here and stays here. Each entry is captured, served, opened the way a reader opens it, and checked: the live-page and packaged-page pictures are compared for collapse, and the site's own interaction is exercised. Run: ZIMI_SITE_SUITE=1 python3 -m pytest tests/test_reported_sites.py, or python3 scripts/site_suite.py for the report with pictures. Needs the network, a browser, and the warc2zim sidecar for alive.",
+  "_": "Every site a user reports goes here and stays here. Each entry is captured, served, opened the way a reader opens it, and checked: the live-page and packaged-page pictures are compared for collapse, and the site's own interaction is exercised. An entry may carry \"known_broken\" with the reason: the suite still runs it, reports it, and does NOT fail the build — but it DOES fail if a known-broken check starts passing, because that is the day we can tell the reporter. Run: ZIMI_SITE_SUITE=1 python3 -m pytest tests/test_reported_sites.py, or python3 scripts/site_suite.py for the report with pictures. Needs the network, a browser, and the warc2zim sidecar for alive.",
   "sites": [
     {
       "url": "https://draculatheme.com/contribute",
@@ -9,6 +9,12 @@
       "interact": {
         "click": "button[aria-label=\"Step 02\"]",
         "expect_text_change": true
+      },
+      "also_check": {
+        "why": "the palette's theme switch, which is what #64 is still about",
+        "click_text": "Alucard",
+        "expect_text_change": true,
+        "known_broken": "The page does not hydrate in replay. Verified 2026-09-08: every chunk is in the ZIM, all inline scripts parse, no console/page/rejection errors, the RSC payload sits unconsumed (__next_f keeps 8 entries where the live page drains it to 0), and React never mounts. It fails identically with the ZIM served bare, no Zimi reader involved, so it is warc2zim/wabac replay and not ours. Neither the shipped block-globals patch nor the full upstream fix (python-scraperlib#335) changes it."
       }
     },
     {

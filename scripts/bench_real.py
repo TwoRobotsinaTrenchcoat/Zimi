@@ -19,9 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Colon-separated paths in ZIMI_BENCH_ZIMS, else every .zim in ./zims.
 ZIM_SOURCES = [
-    p
-    for p in os.environ.get("ZIMI_BENCH_ZIMS", "").split(os.pathsep)
-    if p
+    p for p in os.environ.get("ZIMI_BENCH_ZIMS", "").split(os.pathsep) if p
 ] or sorted(glob.glob(os.path.join("zims", "*.zim")))
 
 

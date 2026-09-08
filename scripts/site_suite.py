@@ -154,6 +154,13 @@ def interact(page_or_frame, spec):
         if el is None:
             return False, f"nothing matches {spec['click']!r}"
         el.click()
+    if "click_text" in spec:
+        # By its visible words, the way a person finds a control.
+        el = target.get_by_role("button", name=spec["click_text"], exact=True).first
+        try:
+            el.click(timeout=8000)
+        except Exception as e:
+            return False, f"could not click {spec['click_text']!r}: {str(e)[:60]}"
     if "type_into" in spec:
         box = target.query_selector(spec["type_into"])
         if box is None:
@@ -169,6 +176,29 @@ def interact(page_or_frame, spec):
     if want and want.lower() not in after.lower():
         return False, f"{want!r} never appeared"
     return True, "as expected"
+
+
+def run_also_check(frame, spec):
+    """A second interaction on the same page, which may be a known failure.
+
+    A site can be broken in one way and fine in another, and the broken half
+    must stay visible rather than being dropped from the list. A check marked
+    ``known_broken`` does not fail the run while it fails — but it DOES fail
+    the run the day it starts passing, because that is the day we can go and
+    tell the person who reported it."""
+    if not spec:
+        return None
+    ok, detail = interact(frame, spec)
+    known = spec.get("known_broken")
+    return {
+        "why": spec.get("why", ""),
+        "ok": ok,
+        "detail": detail,
+        "known_broken": bool(known),
+        "reason": known or "",
+        # The one that fails the suite: a known failure that healed.
+        "now_passing": bool(known) and ok,
+    }
 
 
 def check_site(site, base, zim_path, out_dir):
@@ -197,10 +227,12 @@ def check_site(site, base, zim_path, out_dir):
         frame = next(
             (f for f in page.frames if f != page.main_frame and name in f.url), None
         )
+        also = None
         if frame is None:
             ok, detail = False, "the reader never framed the article"
         else:
             ok, detail = interact(frame, site.get("interact"))
+            also = run_also_check(frame, site.get("also_check"))
         page.screenshot(
             path=str(out_dir / f"{stem}-reader.jpg"), type="jpeg", quality=60
         )
@@ -219,6 +251,7 @@ def check_site(site, base, zim_path, out_dir):
             "collapsed": collapsed,
         },
         "interaction": {"ok": ok, "detail": detail},
+        "also": also,
         # An alive ZIM is written by warc2zim, not by Zimi's Creator, so it
         # cannot carry Zimi's screenshot metadata yet. Say so rather than fail
         # a site whose whole point is that it needed the alive engine.
@@ -229,7 +262,10 @@ def check_site(site, base, zim_path, out_dir):
         ),
         "pass": ok
         and not collapsed
-        and (bool(live) and bool(packaged) or site.get("engine") == "alive"),
+        and (bool(live) and bool(packaged) or site.get("engine") == "alive")
+        # A known-broken check that started passing is a failure here on
+        # purpose: it means the entry is stale and somebody is owed news.
+        and not (also or {}).get("now_passing", False),
     }
 
 
