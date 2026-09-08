@@ -130,7 +130,9 @@ def test_the_fast_engine_accepts_it_and_ignores_it():
 
 
 def test_the_session_honours_off():
-    session = renderer.RenderedSession(work_dir=tempfile.gettempdir(), capture_variants=False)
+    session = renderer.RenderedSession(
+        work_dir=tempfile.gettempdir(), capture_variants=False
+    )
     assert session._capture_variants is False
 
 
@@ -142,7 +144,9 @@ def test_the_session_defaults_to_sweeping():
 def test_a_switched_off_sweep_does_not_touch_the_archive(monkeypatch):
     """The gate is checked before anything is enumerated, so an off sweep costs
     no page evaluation at all — not a sweep that runs and discards."""
-    session = renderer.RenderedSession(work_dir=tempfile.gettempdir(), capture_variants=False)
+    session = renderer.RenderedSession(
+        work_dir=tempfile.gettempdir(), capture_variants=False
+    )
     # A recorder and a context would otherwise satisfy the two later guards.
     session._recorder = object()
     session._context = object()

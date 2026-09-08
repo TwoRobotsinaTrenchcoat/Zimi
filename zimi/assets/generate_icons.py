@@ -26,9 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Brand colors from the web UI CSS:
 # background: linear-gradient(135deg, #f59e0b, #f97316, #ef4444);
 GRADIENT_COLORS = [
-    (245, 158, 11),   # #f59e0b — amber
-    (249, 115, 22),   # #f97316 — orange
-    (239, 68, 68),    # #ef4444 — red
+    (245, 158, 11),  # #f59e0b — amber
+    (249, 115, 22),  # #f97316 — orange
+    (239, 68, 68),  # #ef4444 — red
 ]
 BG_DARK = (10, 10, 11)  # #0a0a0b — matches var(--bg)
 
@@ -62,8 +62,7 @@ def _render_z_mask_coretext(size, font_size):
         # Create RGBA bitmap context (CoreText needs explicit foreground color)
         cs = Quartz.CGColorSpaceCreateDeviceRGB()
         ctx = Quartz.CGBitmapContextCreate(
-            None, size, size, 8, size * 4,
-            cs, Quartz.kCGImageAlphaPremultipliedLast
+            None, size, size, 8, size * 4, cs, Quartz.kCGImageAlphaPremultipliedLast
         )
 
         # Black background
@@ -73,8 +72,7 @@ def _render_z_mask_coretext(size, font_size):
         # Create system font at Bold weight (700) — matches -apple-system bold
         font = CoreText.CTFontCreateWithName(".AppleSystemUIFont", font_size, None)
         bold_font = CoreText.CTFontCreateCopyWithSymbolicTraits(
-            font, font_size, None,
-            CoreText.kCTFontBoldTrait, CoreText.kCTFontBoldTrait
+            font, font_size, None, CoreText.kCTFontBoldTrait, CoreText.kCTFontBoldTrait
         )
         if bold_font:
             font = bold_font
@@ -260,8 +258,12 @@ def main():
     ico_path = os.path.join(HERE, "icon.ico")
     sizes = [16, 32, 48, 64, 128, 256]
     ico_images = [icon.resize((s, s), Image.LANCZOS) for s in sizes]
-    ico_images[0].save(ico_path, format="ICO", append_images=ico_images[1:],
-                       sizes=[(s, s) for s in sizes])
+    ico_images[0].save(
+        ico_path,
+        format="ICO",
+        append_images=ico_images[1:],
+        sizes=[(s, s) for s in sizes],
+    )
     print(f"  Created {ico_path}")
 
     # ICNS (macOS)

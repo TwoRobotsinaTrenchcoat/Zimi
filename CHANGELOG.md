@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A capture made with the alive or zimit engine now keeps its two pictures too.** 1.9.2 shipped the feature without them, which left the engine most likely to produce a doubtful capture as the one engine that could not show you. warc2zim writes those ZIMs, takes no arbitrary metadata, and seals the file, so their pictures are kept beside the library instead and the same two routes serve them. The packaged picture is taken from the finished file by serving its own entries to the browser. Deleting a ZIM drops them.
+
 - **Darken articles still did nothing on a normal ZIM (#65), which is what was actually reported.** 1.9.2 fixed the checkbox for captured sites and left the reported case untouched. The decision only ever *added* darkening to a light page, so on a page carrying its own dark mode — every modern Wikipedia ZIM follows the operating system through `skin-theme-clientpref-os` — ticking had nothing to add and unticking had nothing to remove. Read in dark mode, the checkbox did nothing in either direction. It now decides the article's appearance both ways: unticked, Zimi asks the page for its light face, through `color-scheme` (so a media-query dark mode stops matching) and through MediaWiki's own theme class (which is not a media query). Ticking restores exactly the class the page shipped with.
 
 ## [1.9.2] - 2026-09-07

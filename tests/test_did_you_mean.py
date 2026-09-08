@@ -126,7 +126,9 @@ class VocabSizeOrderTests(unittest.TestCase):
         # "zzz" sorts last alphabetically but is the big index (many titles)
         # — real libraries need this one scanned first when budget is tight.
         _make_title_index(self.tmp, "zzz", [f"Big Title {i}" for i in range(200)])
-        self._patch_dir = mock.patch.object(_search, "_title_index_dir", lambda: self.tmp)
+        self._patch_dir = mock.patch.object(
+            _search, "_title_index_dir", lambda: self.tmp
+        )
         self._patch_dir.start()
         _search._reset_vocab()
 
@@ -189,7 +191,9 @@ class VocabStrideSamplingTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="zimi-dym-stride-")
-        self._patch_dir = mock.patch.object(_search, "_title_index_dir", lambda: self.tmp)
+        self._patch_dir = mock.patch.object(
+            _search, "_title_index_dir", lambda: self.tmp
+        )
         self._patch_dir.start()
         _search._reset_vocab()
 
@@ -262,7 +266,9 @@ class VocabLossyCountingTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="zimi-dym-lossy-")
-        self._patch_dir = mock.patch.object(_search, "_title_index_dir", lambda: self.tmp)
+        self._patch_dir = mock.patch.object(
+            _search, "_title_index_dir", lambda: self.tmp
+        )
         self._patch_dir.start()
         _search._reset_vocab()
 
@@ -576,7 +582,9 @@ class SearchAllTriggerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="zimi-dym-sa-")
         _make_title_index(self.tmp, "wikipedia", TITLES)
-        self._patch_dir = mock.patch.object(_search, "_title_index_dir", lambda: self.tmp)
+        self._patch_dir = mock.patch.object(
+            _search, "_title_index_dir", lambda: self.tmp
+        )
         self._patch_dir.start()
         self._patch_cache = mock.patch.object(
             _search,

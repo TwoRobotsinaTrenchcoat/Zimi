@@ -85,7 +85,6 @@ class TestQueryStringsAreTheAddress(unittest.TestCase):
         self.assertEqual(out, html)
 
 
-
 class TestInlineStyleBackgrounds(unittest.TestCase):
     """solar.lowtechmagazine.com sets every story's picture as
     ``<div class="featured-img" style="background-image: url('https://…png')">``.
@@ -112,6 +111,7 @@ class TestInlineStyleBackgrounds(unittest.TestCase):
         self.assertIn("url('../_assets/_remote/", out)
         self.assertNotIn("https://solar.lowtechmagazine.com/2026", out)
         self.assertIn('<p style="color:red">plain</p>', out)
+
 
 class TestAPlaceholderSourceIsNotAPicture(unittest.TestCase):
     """apple.com's product tiles are ``<picture>`` elements whose first
@@ -155,10 +155,12 @@ class TestImageSetIsOneFilePerSlot(unittest.TestCase):
     def test_an_image_set_in_a_style_attribute_carries_one_variant(self):
         from zimi.creator import _carry_style_attrs
 
-        c, added = _carrier(lambda url: (b"WEBP", "image/webp"), page_url="https://www.cnn.com/")
+        c, added = _carrier(
+            lambda url: (b"WEBP", "image/webp"), page_url="https://www.cnn.com/"
+        )
         page = (
-            '<div style="background-image: image-set(url(\'https://m.cnn.com/a-1x.webp\') 1x, '
-            'url(\'https://m.cnn.com/a-2x.webp\') 2x, url(\'https://m.cnn.com/a-3x.webp\') 3x);"></div>'
+            "<div style=\"background-image: image-set(url('https://m.cnn.com/a-1x.webp') 1x, "
+            "url('https://m.cnn.com/a-2x.webp') 2x, url('https://m.cnn.com/a-3x.webp') 3x);\"></div>"
         )
         out = _carry_style_attrs(c, "lbl", "https://www.cnn.com/", page)
         self.assertEqual(len(added), 1, added)
@@ -174,7 +176,7 @@ class TestImageSetIsOneFilePerSlot(unittest.TestCase):
         out = collapse_image_set(css)
         self.assertEqual(out, ".x{background:url(b.png)} .y{background:url(c.png)}")
         # -webkit- prefixed and type() candidates are the same set.
-        css2 = "a{background:-webkit-image-set(url(\"s.webp\") type(\"image/webp\") 1x, url(\"s@2x.webp\") 2x)}"
+        css2 = 'a{background:-webkit-image-set(url("s.webp") type("image/webp") 1x, url("s@2x.webp") 2x)}'
         self.assertEqual(collapse_image_set(css2), 'a{background:url("s@2x.webp")}')
 
 
@@ -190,11 +192,15 @@ class TestVariantCustomPropertiesAreOneSlot(unittest.TestCase):
     def test_nine_properties_carry_one_file(self):
         from zimi.creator import _carry_style_attrs
 
-        c, added = _carrier(lambda url: (b"JPG", "image/jpeg"), page_url="https://www.cnn.com/")
+        c, added = _carrier(
+            lambda url: (b"JPG", "image/jpeg"), page_url="https://www.cnn.com/"
+        )
         props = []
         for dev in ("desktop", "tablet", "mobile"):
             for dens in ("", "-2x", "-3x"):
-                props.append(f"--image-{dev}-url{dens}:url(&quot;https://m.cnn.com/{dev}{dens or '-1x'}.jpg&quot;)")
+                props.append(
+                    f"--image-{dev}-url{dens}:url(&quot;https://m.cnn.com/{dev}{dens or '-1x'}.jpg&quot;)"
+                )
         page = '<img src="https://m.cnn.com/src.jpg" style="' + "; ".join(props) + '">'
         out = _carry_style_attrs(c, "lbl", "https://www.cnn.com/", page)
         # One file for the nine properties (the src is rewrite_media's job).

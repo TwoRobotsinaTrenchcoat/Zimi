@@ -885,9 +885,7 @@ class RenderedPage:
 
     __slots__ = ("final_url", "html", "bytes", "content_language", "resources", "shot")
 
-    def __init__(
-        self, final_url, html, nbytes, content_language, resources, shot=None
-    ):
+    def __init__(self, final_url, html, nbytes, content_language, resources, shot=None):
         # `shot`: JPEG bytes of the live page as it stood when captured, or
         # None where no browser took one. The one thing about a capture that
         # cannot be recovered later — the site will have changed.
@@ -1354,7 +1352,9 @@ class RenderedSession:
         page = None
         try:
             page = self._context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=int(NAV_TIMEOUT * 1000))
+            page.goto(
+                url, wait_until="domcontentloaded", timeout=int(NAV_TIMEOUT * 1000)
+            )
             self._quiet(page, QUIET_TIMEOUT)
             self._reveal(page)
             self._quiet(page, SCROLL_QUIET_TIMEOUT)
@@ -1435,6 +1435,49 @@ class RenderedSession:
                     page.close()
                 except Exception:
                     pass
+
+    def shoot_zim_file(self, zim_path):
+        """A picture of a FINISHED ZIM, served out of the file itself.
+
+        ``shoot_packaged`` photographs bytes on their way into a ZIM Zimi is
+        writing. The engines that hand a WARC to warc2zim never hold those
+        bytes: the sidecar writes the file, and the first moment the packaged
+        page exists at all is after it is sealed. So this reads the sealed
+        file instead and answers the browser out of it — same synthetic origin,
+        same settling, so the picture is comparable with the live one.
+        """
+        try:
+            from libzim.reader import Archive
+        except Exception as e:
+            log.debug("no libzim to photograph %s: %s", zim_path, e)
+            return None
+        try:
+            archive = Archive(zim_path)
+            mainpath = archive.main_entry.get_item().path
+            html = bytes(archive.main_entry.get_item().content).decode(
+                "utf-8", errors="replace"
+            )
+        except Exception as e:
+            log.debug("cannot open %s to photograph it: %s", zim_path, e)
+            return None
+
+        class _Entries:
+            """``by_path`` over a sealed archive: the same .get() contract, one
+            entry read at a time rather than a dict of the whole file."""
+
+            def get(self, path):
+                for candidate in (path, "A/" + path, "-/" + path):
+                    try:
+                        item = archive.get_entry_by_path(candidate).get_item()
+                    except Exception:
+                        continue
+                    try:
+                        return item.mimetype, bytes(item.content)
+                    except Exception:
+                        return None
+                return None
+
+        return self.shoot_packaged(html, _Entries(), mainpath=mainpath)
 
     def _quiet(self, page, timeout):
         """Wait for the network to go quiet, and stop waiting when it will not.
@@ -2354,10 +2397,7 @@ def _mimetype_of(response, url=""):
     except Exception:
         raw = ""
     mime = raw.split(";")[0].strip().lower()
-    return (
-        mime
-        or guess_mime(urllib.parse.urlsplit(url).path)
-    )
+    return mime or guess_mime(urllib.parse.urlsplit(url).path)
 
 
 def _headers_of(response):
@@ -2668,7 +2708,9 @@ def _rewrite_asset_tags(assets, html):
         is_link = bool(_LINK_TAG_RE.match(tag))
         if is_link and not _carried_link(tag):
             return tag
-        for attr in ("src", "poster", "data", "background") if not is_link else ("href",):
+        for attr in (
+            ("src", "poster", "data", "background") if not is_link else ("href",)
+        ):
             tag = _attr_re(attr).sub(lambda am: _fix_ref(assets, am), tag)
         if is_link and "../" in tag:
             tag = drop_integrity(tag)  # the sheet is ours now; the hash was for theirs

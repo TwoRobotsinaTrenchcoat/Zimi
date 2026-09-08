@@ -227,7 +227,13 @@ class TestTheMaskIsNotAWhitespaceDesert(unittest.TestCase):
 
         from zimi.zimwriter import attr_re
 
-        page = "<div style='color:red'>" + "<style>" + "a{}" * 700_000 + "</style>" + '<p style="x:url(a.png)">t</p>'
+        page = (
+            "<div style='color:red'>"
+            + "<style>"
+            + "a{}" * 700_000
+            + "</style>"
+            + '<p style="x:url(a.png)">t</p>'
+        )
         masked = mask_raw_text(page)
         self.assertEqual(len(masked), len(page))
         t = time.monotonic()

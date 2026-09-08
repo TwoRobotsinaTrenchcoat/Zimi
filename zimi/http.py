@@ -1058,6 +1058,21 @@ def _zim_kinds():
     return kinds
 
 
+def _shot_beside(name, kind):
+    """Whether this ZIM's picture is in the store beside the library.
+
+    True only for the engines whose ZIM Zimi does not write (alive, zimit):
+    warc2zim seals the file and takes no arbitrary metadata, so their pictures
+    are kept next to it. See ``zimi.shotstore``."""
+    try:
+        from zimi import server as _srv
+        from zimi import shotstore as _store
+
+        return _store.has(_srv.ZIMI_DATA_DIR, name, kind)
+    except Exception:
+        return False
+
+
 def _zim_info(name):
     """Everything one ZIM knows about itself, or None when it is not installed
     (or not permitted, which reads the same way to a restricted user).
@@ -1083,9 +1098,15 @@ def _zim_info(name):
     # library view fetches for every card.
     info = {
         "name": name,
-        "shot": f"/w/{name}/-/shot-live" if meta.get(_zw.SHOT_METADATA_KEY) else "",
+        "shot": (
+            f"/w/{name}/-/shot-live"
+            if (meta.get(_zw.SHOT_METADATA_KEY) or _shot_beside(name, "live"))
+            else ""
+        ),
         "shot_zim": (
-            f"/w/{name}/-/shot-zim" if meta.get(_zw.SHOT_ZIM_METADATA_KEY) else ""
+            f"/w/{name}/-/shot-zim"
+            if (meta.get(_zw.SHOT_ZIM_METADATA_KEY) or _shot_beside(name, "zim"))
+            else ""
         ),
         "file": entry.get("file", ""),
         # The card's title/description come from the same cache, so the panel
@@ -2587,6 +2608,16 @@ class ZimHandler(BaseHTTPRequestHandler):
             data = bytes(archive.get_metadata(key))
         except Exception:
             data = b""
+        if not data:
+            # A ZIM warc2zim wrote carries no metadata Zimi could add, so its
+            # pictures live beside the library instead. Same route, same
+            # contract; only the shelf they come off differs.
+            from zimi import server as _srv
+            from zimi import shotstore as _store
+            from zimi import zimwriter as _zw
+
+            kind = "live" if key == _zw.SHOT_METADATA_KEY else "zim"
+            data = _store.read(_srv.ZIMI_DATA_DIR, zim_name, kind) or b""
         if not data:
             # A miss is never remembered: a ZIM re-captured with a browser
             # gains these, and must not stay pictureless in that browser.

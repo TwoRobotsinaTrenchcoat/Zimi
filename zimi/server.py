@@ -1909,6 +1909,7 @@ _MASS_STAMP_MTIME_TOL = 3600.0  # first_seen must be within 1h of file mtime to 
 _zim_list_cache = None
 _zim_files_cache = None  # {name: path} — cached at startup, ZIM dir is read-only
 
+
 # ── Per-request ZIM allow context (multi-user v1) ────────────────────────────
 # When a named USER (not admin, not anonymous) is logged in, the request's ZIM
 class ZimiHTTPServer(ThreadingHTTPServer):

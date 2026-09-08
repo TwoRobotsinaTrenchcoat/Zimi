@@ -36,7 +36,6 @@ from tests.test_create_routes import (  # noqa: E402,F401
     stub_engine,
 )
 
-
 # A deadline, not a poll count — same reason as _wait_done in
 # test_create_routes.py: a fixed number of turns measures how fast the runner
 # is, not how long the job took, so a loaded machine fails a passing test.
@@ -841,7 +840,11 @@ def test_a_finished_job_is_named_by_what_the_capture_found(tmp_path, monkeypatch
     (sive_rs_n-12) where the library itself shows the page's title."""
 
     def finds_a_title(job, opts):
-        return {"path": "/zims/sive_rs_n.zim", "title": "Hell Yeah or No", "registered": False}
+        return {
+            "path": "/zims/sive_rs_n.zim",
+            "title": "Hell Yeah or No",
+            "registered": False,
+        }
 
     monkeypatch.setattr(manage, "_create_run", finds_a_title)
     _start_job("untitled")
@@ -850,7 +853,10 @@ def test_a_finished_job_is_named_by_what_the_capture_found(tmp_path, monkeypatch
     assert body["result"]["title"] == "Hell Yeah or No"
 
     # A title the person typed wins over the one the capture found.
-    _post("/manage/create", {"mode": "site", "source": "https://example.test/named", "title": "My name"})
+    _post(
+        "/manage/create",
+        {"mode": "site", "source": "https://example.test/named", "title": "My name"},
+    )
     body = _wait_done()
     assert body["result"]["title"] == "My name"
 
@@ -880,11 +886,17 @@ def test_a_video_address_typed_under_web_page_probes_as_a_video(monkeypatch):
     )
     assert status == 200 and out["mode"] == "video" and out["videos"] == 3, out
     assert "url" not in seen
-    out, status = manage._create_probe({"mode": "page", "source": "https://sqlite.org/"})
+    out, status = manage._create_probe(
+        {"mode": "page", "source": "https://sqlite.org/"}
+    )
     assert status == 200 and out["mode"] == "page", out
     # And back: a page address typed while the Video chip is lit is a page.
-    out, status = manage._create_probe({"mode": "video", "source": "https://sqlite.org/"})
-    assert status == 200 and out["mode"] == "page" and seen["url"] == "https://sqlite.org/", out
+    out, status = manage._create_probe(
+        {"mode": "video", "source": "https://sqlite.org/"}
+    )
+    assert (
+        status == 200 and out["mode"] == "page" and seen["url"] == "https://sqlite.org/"
+    ), out
 
 
 def _yt_dlp_present():
@@ -911,6 +923,7 @@ def test_a_news_article_is_not_hijacked_into_video_mode(monkeypatch):
 
     monkeypatch.setattr(manage, "_create_job", None)
     seen = {}
+
     def _fake_video(source, limit):
         seen["video"] = source
         return {"ok": True}

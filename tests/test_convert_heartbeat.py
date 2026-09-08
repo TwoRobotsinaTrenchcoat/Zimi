@@ -30,7 +30,11 @@ def test_a_silent_command_gets_a_heartbeat_line():
 def test_a_chatty_command_gets_no_heartbeat():
     lines = []
     importer._run_stream(
-        [sys.executable, "-c", "import time\nfor i in range(4):\n print(i, flush=True); time.sleep(0.2)"],
+        [
+            sys.executable,
+            "-c",
+            "import time\nfor i in range(4):\n print(i, flush=True); time.sleep(0.2)",
+        ],
         lines.append,
         heartbeat_s=0.5,
     )

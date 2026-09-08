@@ -214,7 +214,9 @@ def upgrade_scheme(url, origin):
         and u.port in (None, 80)
         and o.port in (None, 443)
     ):
-        return urllib.parse.urlunsplit(("https", u.hostname.lower(), u.path, u.query, u.fragment))
+        return urllib.parse.urlunsplit(
+            ("https", u.hostname.lower(), u.path, u.query, u.fragment)
+        )
     return url
 
 
