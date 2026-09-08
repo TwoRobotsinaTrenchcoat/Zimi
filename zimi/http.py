@@ -1058,6 +1058,33 @@ def _zim_kinds():
     return kinds
 
 
+def _capture_summary(meta):
+    """What a capture recorded about itself, or None.
+
+    The record is the only place the truth about a warc2zim-written ZIM lives:
+    the converter reports two "articles" for a whole site, one of which can be
+    a third-party widget it happened to store as HTML."""
+    import json as _json
+
+    from zimi import zimpatch as _zimpatch
+
+    raw = meta.get(_zimpatch.CAPTURE_METADATA_KEY) or ""
+    if not raw:
+        return None
+    try:
+        record = _json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(record, dict):
+        return None
+    return {
+        "engine": record.get("engine", ""),
+        "captured": record.get("captured", ""),
+        "assets": record.get("assets", 0),
+        "pages": len(record.get("pages") or []),
+    }
+
+
 def _zim_info(name):
     """Everything one ZIM knows about itself, or None when it is not installed
     (or not permitted, which reads the same way to a restricted user).
@@ -1123,6 +1150,7 @@ def _zim_info(name):
         "tags": _split_tags(meta.get("Tags")),
         "history": history,
         "kind": _zimi_kind(meta),
+        "capture": _capture_summary(meta),
         "readable": readable,
     }
     if entry.get("article_count") is not None:

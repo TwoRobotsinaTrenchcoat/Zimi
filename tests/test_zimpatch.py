@@ -108,7 +108,6 @@ def record():
         engine="alive",
         pages=[{"url": PAGE_URL, "title": "The guide, as captured"}],
         assets=2,
-        blocked={"blocked_hosts": ["tracker.example"]},
     )
 
 
@@ -155,7 +154,6 @@ def test_the_record_travels_in_the_file(captured_zim, record):
             "title": "The guide, as captured",
         }
     ]
-    assert stored["blocked"] == {"blocked_hosts": ["tracker.example"]}
     assert json.loads(bytes(after.get_metadata(zimpatch.CAPTURE_METADATA_KEY)))
 
 

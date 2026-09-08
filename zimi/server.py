@@ -2823,7 +2823,7 @@ def load_cache(force=False):
     _build_domain_zim_map()
 
 
-def _domain_map_entries_for_zim(name, filename, source_meta):
+def _domain_map_entries_for_zim(name, filename, source_meta, main_path=""):
     """Domain→ZIM entries ONE ZIM contributes, without opening any archive.
 
     Mirrors the three discovery methods of interlang._build_domain_zim_map
@@ -2867,6 +2867,17 @@ def _domain_map_entries_for_zim(name, filename, source_meta):
                 _add(source_meta.split("/")[0])
         except Exception as e:
             log.debug("Failed to parse Source %r for %s: %s", source_meta, name, e)
+    elif main_path:
+        # A capture's main entry path IS the site's address
+        # ("draculatheme.com/contribute"), which is the discovery interlang
+        # calls 2b and this function was missing despite the docstring above
+        # promising the two are in sync. Without it a just-created capture
+        # registered under four invented domains — dracula.com, .org, .io,
+        # .net — and nothing linked to it until the next restart rebuilt the
+        # map properly.
+        host = (main_path or "").split("/", 1)[0]
+        if re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", host or ""):
+            _add(host)
     elif not name.startswith("zimgit") and "_en_" not in name:
         for tld in (".com", ".org", ".io", ".net"):
             _add(name + tld)
@@ -2970,6 +2981,13 @@ def register_zim_file(path, removed_files=()):
         )
     except Exception:
         source_meta = ""
+    # The capture's own address, for a ZIM warc2zim wrote: its main entry path
+    # is the site's address. Read on the same private handle, for the same
+    # reason.
+    try:
+        main_path = archive.main_entry.get_item().path
+    except Exception:
+        main_path = ""
 
     # New/Updated stamps, same semantics as load_cache: a new dated filename
     # of an already-known ZIM inherits the ORIGINAL first_seen and stamps
@@ -3058,7 +3076,9 @@ def register_zim_file(path, removed_files=()):
         import zimi.interlang as _interlang
 
         merged = dict(_interlang._domain_zim_map)
-        for _d, _n in _domain_map_entries_for_zim(name, filename, source_meta).items():
+        for _d, _n in _domain_map_entries_for_zim(
+            name, filename, source_meta, main_path
+        ).items():
             merged.setdefault(_d, _n)
         _interlang._domain_zim_map = merged
     log.info(

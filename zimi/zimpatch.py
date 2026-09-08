@@ -71,9 +71,9 @@ def zim_path_for_url(url):
     return ""
 
 
-def build_record(*, seed_url, engine, pages, assets, blocked=None, extra=None):
+def build_record(*, seed_url, engine, pages, assets):
     """The capture record, as a plain dict ready to be stored."""
-    record = {
+    return {
         "version": RECORD_VERSION,
         "engine": engine,
         "source": seed_url,
@@ -89,11 +89,6 @@ def build_record(*, seed_url, engine, pages, assets, blocked=None, extra=None):
             if zim_path_for_url(p.get("url") or "")
         ],
     }
-    if blocked:
-        record["blocked"] = blocked
-    if extra:
-        record.update(extra)
-    return record
 
 
 def patch(

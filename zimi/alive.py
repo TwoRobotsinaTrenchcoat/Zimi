@@ -338,7 +338,7 @@ def _convert(archive, out, *, zim_name, note, **fields):
     return out
 
 
-def finish_zim(out, *, seed_url, pages, assets, live_shot, blocked=None, note=None):
+def finish_zim(out, *, seed_url, pages, assets, live_shot, note=None):
     """Put into the ZIM what only this capture could know.
 
     warc2zim wrote the file and takes no arbitrary metadata, so this is where
@@ -361,11 +361,7 @@ def finish_zim(out, *, seed_url, pages, assets, live_shot, blocked=None, note=No
     except Exception as e:
         log.debug("no packaged picture for %s: %s", out, e)
     record = zimpatch.build_record(
-        seed_url=seed_url,
-        engine=ENGINE_NAME,
-        pages=pages,
-        assets=assets,
-        blocked=blocked or None,
+        seed_url=seed_url, engine=ENGINE_NAME, pages=pages, assets=assets
     )
     patched = zimpatch.patch(
         out, record, live_shot=live_shot, packaged_shot=packaged, note=say
@@ -528,7 +524,6 @@ def create_alive_page_zim(
             pages=[{"url": final_url, "title": zim_title}],
             assets=capture.count,
             live_shot=capture.last_shot,
-            blocked=blocked or None,
             note=note,
         )
     except BaseException:
@@ -730,7 +725,6 @@ def create_alive_site_zim(
                 ],
                 assets=capture.count,
                 live_shot=capture.last_shot,
-                blocked=blocked or None,
                 note=note,
             )
     except BaseException:

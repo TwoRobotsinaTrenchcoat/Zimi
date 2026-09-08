@@ -890,6 +890,9 @@ function _zimCount(z) {
   if (!z) return undefined;
   const articles = typeof z.article_count === 'number' ? z.article_count : undefined;
   const entries = typeof z.entries === 'number' ? z.entries : undefined;
+  // A capture counted its own pages. libzim's article count cannot know
+  // that: for a whole crawl it reported two, one a vendor feedback widget.
+  if (z.capture && z.capture.pages) return z.capture.pages;
   if (articles === undefined) return entries;
   if (z.zimi_export) return articles;      // a capture really is one page
   if (articles <= 1 && entries > 1) return entries;
