@@ -1448,8 +1448,14 @@ function updateTopbar() {
       /\.(pdf|epub)$/i.test(currentArticle.path || '');
     saveBtn.style.display = showSave ? 'flex' : 'none';
   }
-  randomBtn.style.display = (mode !== 'manage' && !_almanacOpen && !_createOpen) ? 'flex' : 'none';
-  document.getElementById('library-btn').style.display = (mode !== 'manage' && !_almanacOpen && !_createOpen) ? 'flex' : 'none';
+  // The Create page keeps the topbar it had. Hiding these put a wide desktop
+  // window into the mobile shape — three controls and a ⋯ — which reads as the
+  // toolbar breaking rather than as focus (#68). Almanac still hides them: it
+  // paints its own full-screen scene and the library chrome would sit on top
+  // of it, where Create is an ordinary page under the same bar.
+  var libraryChromeOff = mode === 'manage' || _almanacOpen;
+  randomBtn.style.display = libraryChromeOff ? 'none' : 'flex';
+  document.getElementById('library-btn').style.display = libraryChromeOff ? 'none' : 'flex';
   // Create-a-ZIM lives in the ⋯ menu at every width — creation is an
   // occasional, deliberate act, so it stays out of the primary topbar. The ⋯
   // trigger is CSS-hidden on a wide viewport at rest, so reveal it (inline
@@ -1461,7 +1467,7 @@ function updateTopbar() {
   // on a wide viewport — hiding it there strands the admin.
   var moreBtn = document.querySelector('.topbar-more');
   if (moreBtn) {
-    moreBtn.style.display = (_createMenuRowAvailable() || _createOpen) ? 'flex' : '';
+    moreBtn.style.display = _createMenuRowAvailable() ? 'flex' : '';
     _syncTopbarMoreSolo(moreBtn);
   }
   document.getElementById('lang-selector-btn').style.display =

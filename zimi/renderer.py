@@ -946,7 +946,14 @@ class RenderedSession:
         extra_wait=0.0,
         block_ads=None,
         capture_variants=None,
+        color_scheme=None,
     ):
+        # Which face of the site to capture. A site with its own dark mode
+        # serves a different page depending on this, and a capture taken in
+        # light while the person browses in dark comes out looking nothing
+        # like the site they were reading (#65). None follows the browser
+        # default, which is light.
+        self._color_scheme = color_scheme
         self._budget = budget
         self._note = note or (lambda _m: None)
         self._viewport = viewport
@@ -1057,11 +1064,14 @@ class RenderedSession:
         except Exception as e:
             log.debug("browser version is not readable: %s", e)
         self._driver_pid = _driver_pid(self._pw)
-        self._context = self._browser.new_context(
-            viewport={"width": self._viewport[0], "height": self._viewport[1]},
-            user_agent=self._user_agent(),
-            ignore_https_errors=False,
-        )
+        context_options = {
+            "viewport": {"width": self._viewport[0], "height": self._viewport[1]},
+            "user_agent": self._user_agent(),
+            "ignore_https_errors": False,
+        }
+        if self._color_scheme in ("dark", "light"):
+            context_options["color_scheme"] = self._color_scheme
+        self._context = self._browser.new_context(**context_options)
         self._context.set_default_timeout(int(NAV_TIMEOUT * 1000))
         self._install_blocking()
         with _sessions_lock:
