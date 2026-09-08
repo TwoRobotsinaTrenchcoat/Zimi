@@ -2313,6 +2313,27 @@ def _extract_zim_date(filename):
     return filename.replace(".zim", ""), None
 
 
+def _read_faces(archive):
+    """``{"main": scheme, "other": {...}}`` when a capture kept both of the
+    site's faces, else None. Never raises: a ZIM without it is every ZIM."""
+    if archive is None:
+        return None
+    try:
+        from zimi.creator import FACES_METADATA_KEY
+
+        raw = bytes(archive.get_metadata(FACES_METADATA_KEY))
+    except Exception:
+        return None
+    try:
+        faces = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    other = (faces or {}).get("other") or {}
+    if not isinstance(faces, dict) or not other.get("path"):
+        return None
+    return faces
+
+
 def _extract_zim_metadata(name, path):
     """Open a ZIM archive and extract its metadata. Returns (info_dict, archive)."""
     size_bytes = os.path.getsize(path)
@@ -2406,6 +2427,13 @@ def _extract_zim_metadata(name, path):
         info["folder"] = folder
     if article_count is not None:
         info["article_count"] = article_count
+    # Both of the site's faces, when a capture kept them. Small, and it has to
+    # ride with the library list rather than the detail panel: the reader picks
+    # a face the moment an article is opened, and it cannot wait for a second
+    # request to find out there was a choice.
+    faces = _read_faces(archive)
+    if faces:
+        info["faces"] = faces
     # Additive flag: a ZIM Zimi itself exported (bookmark exports). The UI
     # shows these with their full creation date.
     if meta_creator == "Zimi":
@@ -2708,6 +2736,12 @@ def load_cache(force=False):
                 entry["folder"] = folder
             if "has_qids" in cached:
                 entry["has_qids"] = cached["has_qids"]
+            # Both of the site's faces, when a capture kept them. Cached like
+            # every other fact about the file: the reader needs it the instant
+            # an article is opened, and re-opening the archive to ask would put
+            # a disk read on the path this cache exists to keep clear.
+            if cached.get("faces"):
+                entry["faces"] = cached["faces"]
             # Additive: real article count. Absent in caches built before this
             # field existed — the UI falls back to `entries` when it's missing.
             if cached.get("article_count") is not None:
@@ -2745,6 +2779,7 @@ def load_cache(force=False):
                 "size_gb": entry["size_gb"],
                 "entries": entry["entries"],
                 "title": entry["title"],
+                "faces": entry.get("faces"),
                 "description": entry["description"],
                 "date": entry.get("date", ""),
                 "language": entry.get("language", ""),

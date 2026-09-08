@@ -32,6 +32,7 @@ import base64
 import hashlib
 import html as _html
 import http.client
+import json
 import logging
 import mimetypes
 import os
@@ -236,6 +237,52 @@ def _capture_pictures(capture, html, final_url):
         except Exception as e:
             log.debug("packaged picture skipped: %s", e)
     return live, packaged
+
+
+OTHER_FACE_PATH = "A/index~other"
+FACES_METADATA_KEY = "X-Zimi-Faces"
+
+
+def _store_other_face(creator, static_cls, capture, title, final_url, note):
+    """Keep the site's other face when it has one, as a second entry.
+
+    A site with a dark mode written as a media query serves a different page
+    depending on the reader's theme, and a capture could only ever keep one of
+    them: someone reading in dark opened a captured site and got the light one,
+    which is not what the site does. Both are kept now, and the reader shows
+    whichever matches the theme in front of the person.
+
+    The alternate is an ordinary entry beside the main one, so any other viewer
+    can still open it, and a metadata key says which is which. Assets are
+    shared: the second face is the same page repainted, so its images and fonts
+    were already carried by the first.
+
+    Returns the metadata value written, or "" when the site has one face."""
+    other = getattr(capture, "other_face", None)
+    if not other:
+        return ""
+    scheme, html = other
+    rendered = capture.render_other(html, final_url)
+    if not rendered:
+        return ""
+    creator.add_item(
+        static_cls(OTHER_FACE_PATH, f"{title} ({scheme})", rendered.encode("utf-8"))
+    )
+    value = json.dumps(
+        {
+            "main": scheme_of_main(scheme),
+            "other": {"scheme": scheme, "path": OTHER_FACE_PATH},
+        },
+        separators=(",", ":"),
+    )
+    creator.add_metadata(FACES_METADATA_KEY, value, "application/json")
+    note(f"kept the site's {scheme} face as well")
+    return value
+
+
+def scheme_of_main(other_scheme):
+    """The face the main entry holds, given the one stored beside it."""
+    return "light" if other_scheme == "dark" else "dark"
 
 
 def _store_pictures(creator, capture, html, final_url, note):
@@ -1951,6 +1998,12 @@ class BuiltinCapture:
             url, timeout=self._timeout, max_redirects=self._max_redirects
         )
 
+    # No browser here, so no media query to flip and no second face to keep.
+    other_face = None
+
+    def render_other(self, html, final_url):
+        return ""
+
     def render(self, target, html, final_url, resolve_link=None):
         import time as _time
 
@@ -2238,6 +2291,9 @@ def create_page_zim(
             note(f"packaging {final_url}")
             creator.add_item(static_cls("A/index", zim_title, page.encode("utf-8")))
             creator.set_mainpath("A/index")
+            faces = _store_other_face(
+                creator, static_cls, capture, zim_title, final_url, note
+            )
             pictures = _store_pictures(creator, capture, page, final_url, note)
             add_standard_metadata(
                 creator,

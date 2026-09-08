@@ -216,6 +216,29 @@ BLOCK_ABORT_CODE = "blockedbyclient"
 # are different bounds. They live here because they are properties of the
 # navigation, not of the conversion that happens afterwards.
 
+# How long a repaint needs after the media query flips. A theme swap is CSS,
+# not a fetch, so this is a frame or two rather than a network wait.
+FACE_SETTLE = 0.35
+
+# What "this page looks different" means, cheaply: the painted colours of the
+# document and of a sample of what is on it. Comparing whole serialized
+# documents would call every page different, because scripts stamp ids and
+# timestamps into the DOM between two reads of the same page.
+_FACE_FINGERPRINT_JS = """() => {
+  const seen = [];
+  for (const el of [document.documentElement, document.body]) {
+    if (!el) continue;
+    const st = getComputedStyle(el);
+    seen.push(st.backgroundColor, st.color, st.colorScheme);
+  }
+  const sample = document.querySelectorAll('a, p, h1, h2, header, nav, main, article, section, button');
+  for (let i = 0; i < sample.length && i < 40; i++) {
+    const st = getComputedStyle(sample[i]);
+    seen.push(st.backgroundColor, st.color, st.borderColor);
+  }
+  return seen.join('|');
+}"""
+
 # The extra quiet time a recording pass allows after everything the snapshot
 # engine waits for. A frozen snapshot only needs the pixels; a recording needs
 # the deferred fetch that populates a carousel three seconds in, because the
@@ -883,9 +906,21 @@ class RenderedPage:
     """A navigation's whole result: where it landed, the rendered DOM, and
     every subresource that came with it."""
 
-    __slots__ = ("final_url", "html", "bytes", "content_language", "resources", "shot")
+    __slots__ = (
+        "final_url",
+        "html",
+        "bytes",
+        "content_language",
+        "resources",
+        "shot",
+        # ``(scheme, html)`` for the site's other face when it has one — the
+        # dark page for a light capture, or the reverse. None when the site
+        # looks the same either way, which is most of the web.
+        "other_face",
+    )
 
     def __init__(self, final_url, html, nbytes, content_language, resources, shot=None):
+        self.other_face = None
         # `shot`: JPEG bytes of the live page as it stood when captured, or
         # None where no browser took one. The one thing about a capture that
         # cannot be recovered later — the site will have changed.
@@ -1323,6 +1358,12 @@ class RenderedSession:
             # is the half of the comparison that stops existing the moment the
             # site changes.
             shot = _shoot(page, url)
+            # The site other face, if it has one. Taken here, from the page
+            # already loaded and settled, because flipping the media query is a
+            # repaint while a second visit is another download -- and the two
+            # visits could disagree about more than the theme. Read BEFORE
+            # _PREPARE_JS, which serializes and mutates.
+            other = self._other_face(page, url)
             try:
                 html = page.evaluate(_PREPARE_JS)
             except Exception as e:
@@ -1338,7 +1379,7 @@ class RenderedSession:
                 page.close()
             except Exception:
                 pass
-        return RenderedPage(
+        page_out = RenderedPage(
             final_url,
             html,
             doc_bytes or len(html.encode("utf-8", errors="replace")),
@@ -1346,6 +1387,41 @@ class RenderedSession:
             resources,
             shot=shot,
         )
+        page_out.other_face = other
+        return page_out
+
+    def _other_face(self, page, url):
+        """``(scheme, html)`` for the face this capture is NOT taking, or None.
+
+        A site with a dark mode written as a media query serves a different
+        page to a reader who prefers dark, and a capture could only ever keep
+        one of them. Both are worth having: the reader shows whichever matches
+        the theme in front of the person, so a captured site behaves the way
+        the live one did.
+
+        A site whose theme is a class some script sets from localStorage does
+        not flip here, and that is the honest answer: nothing on the page
+        changed, so there is no second face to keep.
+
+        Never raises and never disturbs the capture. On any trouble the page
+        is put back the way it was and the answer is None."""
+        want = "light" if (self._color_scheme or "light") == "dark" else "dark"
+        try:
+            before = page.evaluate(_FACE_FINGERPRINT_JS)
+            page.emulate_media(color_scheme=want)
+            page.wait_for_timeout(int(FACE_SETTLE * 1000))
+            after = page.evaluate(_FACE_FINGERPRINT_JS)
+            if after == before:
+                return None
+            return (want, page.evaluate(_PREPARE_JS))
+        except Exception as e:
+            log.debug("no second face for %s: %s", url, e)
+            return None
+        finally:
+            try:
+                page.emulate_media(color_scheme=self._color_scheme or "no-preference")
+            except Exception:
+                pass
 
     def shoot_live(self, url):
         """A picture of the live page, settled exactly as a capture settles it.
@@ -2878,6 +2954,8 @@ class RenderedCapture:
         self.start()
         page = self._session.capture(url)
         self._pages[page.final_url] = page
+        # The site other face, if it has one, kept for render_other().
+        self.other_face = getattr(page, "other_face", None)
         return page.final_url, page.html, page.bytes, page.content_language
 
     def render(self, target, html, final_url, resolve_link=None):
@@ -2907,6 +2985,25 @@ class RenderedCapture:
             if page is not None:
                 self._session.release(page.discard())
         return out
+
+    def render_other(self, html, final_url):
+        """The other face, rewritten for the ZIM through the same carrier.
+
+        It is the same page repainted, so every image, stylesheet and font
+        it references was already carried by the first face. Reusing the
+        carrier is what keeps a second face nearly free: the references are
+        rewritten to entries that already exist, and nothing is fetched.
+
+        Never raises: a second face is a courtesy, and a capture must not
+        fail for one."""
+        assets = self._last_assets
+        if assets is None:
+            return ""
+        try:
+            return render_rendered_page(assets, html, final_url=final_url)
+        except Exception as e:
+            log.debug("could not render the other face of %s: %s", final_url, e)
+            return ""
 
     def shoot_packaged(self, html, mainpath="A/index"):
         """The picture of what the ZIM will serve, taken before it is written.

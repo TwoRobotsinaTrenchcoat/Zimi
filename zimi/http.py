@@ -1058,6 +1058,30 @@ def _zim_kinds():
     return kinds
 
 
+def _faces_summary(meta):
+    """The site's two faces, when the capture kept both, or None.
+
+    A site with a media-query dark mode serves a different page to a reader who
+    prefers dark. The capture keeps both and this says which entry is which, so
+    the reader can open the one that matches the theme in front of the person.
+    """
+    import json as _json
+
+    from zimi import creator as _creator
+
+    raw = meta.get(_creator.FACES_METADATA_KEY) or ""
+    if not raw:
+        return None
+    try:
+        faces = _json.loads(raw)
+    except Exception:
+        return None
+    other = (faces or {}).get("other") or {}
+    if not other.get("path") or not other.get("scheme"):
+        return None
+    return {"main": faces.get("main", ""), "other": other}
+
+
 def _capture_summary(meta):
     """What a capture recorded about itself, or None.
 
@@ -1151,6 +1175,7 @@ def _zim_info(name):
         "history": history,
         "kind": _zimi_kind(meta),
         "capture": _capture_summary(meta),
+        "faces": _faces_summary(meta),
         "readable": readable,
     }
     if entry.get("article_count") is not None:

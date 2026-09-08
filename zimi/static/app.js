@@ -315,6 +315,25 @@ function _markStylesheetPictures(doc) {
 // light mode had passed them. The invert is for wiki-style article ZIMs whose
 // pages have no design of their own. Created ZIMs and bookmark exports keep
 // their colours; the app chrome around them stays dark.
+// A capture may hold both of the site's faces. Open the one that matches the
+// theme the person is reading in, so a captured site behaves the way the live
+// one did rather than always showing whichever face the capture was taken in.
+function _facePathFor(zimName, path) {
+  try {
+    var info = _zimInfo(zimName);
+    var faces = info && info.faces;
+    if (!faces || !faces.other || !faces.other.path) return path;
+    // Only the entry the ZIM opens on has a counterpart; a link deeper into
+    // the capture is left exactly as it was asked for.
+    var main = info.main_path || 'A/index';
+    if (path !== main) return path;
+    var wantDark = _appThemeIsDark();
+    var want = wantDark ? 'dark' : 'light';
+    if (faces.other.scheme === want) return faces.other.path;
+    return path;
+  } catch (e) { return path; }
+}
+
 function _articleIsWebCapture() {
   try {
     var z = currentArticle && _zimsByName && _zimsByName.get(currentArticle.zim);
@@ -16769,6 +16788,9 @@ function openArticle(zim, path, title, opts) {
   // Any normal article open cancels a pending "return to almanac" intent; the
   // almanac deep-link path re-stamps it immediately after this call returns.
   _almReturnScroll = null;
+  // A capture that kept both of the site's faces opens on the one that matches
+  // the theme being read in. A no-op for every other ZIM.
+  path = _facePathFor(zim, path);
   // Modifier-click: always open in new browser tab
   if (_isModClick()) {
     _lastMouseEvent = null;

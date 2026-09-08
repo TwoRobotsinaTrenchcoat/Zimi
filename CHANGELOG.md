@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A capture keeps both of the site's faces, when the site has two.** A site whose dark mode is a media query serves a different page to a reader who prefers dark, and a capture could only ever keep one of them — so someone reading in dark opened a captured site and got the light one. Zimi now reads the other face from the page it already has loaded (a repaint, not a second visit), stores it as an ordinary entry beside the first, and opens whichever matches the theme you are reading in. The assets are shared, so the second face costs almost nothing: MDN's CSS page comes to 1.1 MB with both. A site whose theme is a script setting a class has one face, and is stored as one.
+
 - **The home screen orders your ZIMs the way you ask, and defaults to A–Z (#67).** Article count was the old default; it rewards big files rather than the one you are looking for, and it disagreed with the list in Settings. Order and view now share one control at the top of the library: A–Z, Recently added, Recently updated, Most articles.
 - **A control that will not change now says why.** The update frequency greys out when `ZIMI_AUTO_UPDATE` is set in the environment (#69) and BitTorrent reads "unavailable" when libtorrent is not installed for this Python (#70). Both reasons were only in a hover tooltip or the server log; they are beside the control now, with the next step to take.
 
