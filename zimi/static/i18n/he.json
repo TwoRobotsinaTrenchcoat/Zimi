@@ -1546,5 +1546,10 @@
   "create_beta_report": "ספרו לנו על איזה אתר מדובר",
   "zi_shot_alt": "The live page as it looked when this ZIM was made",
   "zi_shot_caption": "The live page, when this was captured",
-  "zi_shot_zim_caption": "The same page, as this ZIM serves it"
+  "zi_shot_zim_caption": "The same page, as this ZIM serves it",
+  "library_sort": "מיון",
+  "sort_alpha": "א–ת",
+  "sort_added": "נוספו לאחרונה",
+  "sort_updated": "עודכנו לאחרונה",
+  "sort_entries": "הכי הרבה ערכים"
 }

@@ -1059,11 +1059,16 @@
   /* The view toggle's own glyphs sit visually heavier than plain heading text,
      so the shared 10px cat-heading bottom margin reads tight against the grid
      below it — nudge just this variant down by one 4px-grid step. */
-  .cat-heading.has-view-toggle { position: relative; padding-inline-end: 74px; margin-bottom: 18px; }
-  .cat-heading .lib-view-toggle {
+  .cat-heading.has-view-toggle { position: relative; padding-inline-end: 210px; margin-bottom: 18px; }
+  /* Order and view sit together at the end of the first section header: both
+     answer "how do I want to look at my library", so they share one line and
+     one anchor rather than each taking their own. */
+  .cat-heading .lib-controls {
     position: absolute; inset-inline-end: 0; top: 50%; transform: translateY(-50%);
+    display: flex; align-items: center; gap: 8px;
     -webkit-text-fill-color: initial;
   }
+  .cat-heading .lib-view-toggle { -webkit-text-fill-color: initial; }
 
   /* ── Source header ── */
   .source-header { display: flex; gap: 16px; align-items: flex-start; padding: 4px 0 24px; }
@@ -3128,3 +3133,28 @@
 }
 .create-shot:hover { border-color: var(--amber); }
 .create-shot:hover .create-shot-cap { color: var(--amber); }
+
+/* Why a control is disabled, beside the control rather than in a tooltip.
+   A greyed-out switch whose reason is hidden reads as broken (#69, #70). */
+.ms-hint.bt-why, .ms-hint.au-why {
+  margin-top: 4px;
+  max-width: 34ch;
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* The library order control, sharing the first section header's line with the
+   view toggle. Quiet until touched: it is a preference, not an action. */
+.lib-sort {
+  font-size: 12px;
+  padding: 3px 6px;
+  margin-right: 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text2);
+  cursor: pointer;
+  vertical-align: middle;
+  -webkit-text-fill-color: initial;
+}
+.lib-sort:hover, .lib-sort:focus-visible { color: var(--text); border-color: var(--amber-border); }

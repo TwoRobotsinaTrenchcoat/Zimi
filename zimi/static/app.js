@@ -23,6 +23,11 @@ var SK = {
   LIBRARY_TAB: 'zimi_library_tab',
   // Home library layout: 'list' (default full cards) | 'tiles' (compact grid).
   LIBRARY_VIEW: 'zimi_library_view',
+  // How the home screen orders the ZIMs inside a category. Alphabetical by
+  // default (#67): it matches Settings > Library, and it is the order you can
+  // predict when you are looking for a title you already know. Article count
+  // was the old default and rewards big files rather than the one you want.
+  LIBRARY_SORT: 'zimi_library_sort',
   BROWSE_HISTORY: 'zimi_browse_history',
   BOOKMARKS: 'zimi_bookmarks',
   // Bookmark folders (v2) — array of {id,name,parent,order}. Root is implicit
@@ -2901,7 +2906,7 @@ function renderHome(filter) {
     statsBar.style.display = '';
   }
 
-  const sortedAll = zims.filter(z => z.entries !== '?').sort((a, b) => (b.entries || 0) - (a.entries || 0));
+  const sortedAll = _sortLibrary(zims.filter(z => z.entries !== '?'));
 
   // Language filter data — count of ZIMs per language, over the whole library.
   // The pill row only appears with ≥2 distinct languages; a mono-language
@@ -3317,6 +3322,32 @@ function _runRecentSearch(query, zim) {
 function _getLibraryView() {
   return localStorage.getItem(SK.LIBRARY_VIEW) === 'tiles' ? 'tiles' : 'list';
 }
+var LIBRARY_SORTS = ['alpha', 'added', 'updated', 'entries'];
+function _librarySort() {
+  var v = localStorage.getItem(SK.LIBRARY_SORT);
+  return LIBRARY_SORTS.indexOf(v) >= 0 ? v : 'alpha';
+}
+function _setLibrarySort(mode) {
+  if (LIBRARY_SORTS.indexOf(mode) < 0) return;
+  localStorage.setItem(SK.LIBRARY_SORT, mode);
+  renderHome();
+}
+// One comparator per order, so the sort is a lookup rather than a branch at
+// each call site.
+var _LIBRARY_SORTERS = {
+  alpha: function(a, b) {
+    // The title a person reads on the card, not the file name they never see.
+    var at = (a.title || a.name || ''), bt = (b.title || b.name || '');
+    return at.localeCompare(bt, undefined, {sensitivity: 'base', numeric: true});
+  },
+  added: _byFirstSeenDesc,
+  updated: _byUpdatedDesc,
+  entries: function(a, b) { return (b.entries || 0) - (a.entries || 0); },
+};
+function _sortLibrary(list) {
+  return list.slice().sort(_LIBRARY_SORTERS[_librarySort()] || _LIBRARY_SORTERS.alpha);
+}
+
 function _setLibraryView(mode) {
   if (mode !== 'tiles') mode = 'list';
   try { localStorage.setItem(SK.LIBRARY_VIEW, mode); } catch (e) {}
@@ -3336,6 +3367,24 @@ function _libViewToggleHtml() {
     '</span>';
 }
 
+// The order control, beside the view toggle: both answer "how do I want to
+// look at my library", so they share a line rather than each taking one.
+var _LIBRARY_SORT_LABELS = {
+  alpha: 'sort_alpha', added: 'sort_added',
+  updated: 'sort_updated', entries: 'sort_entries',
+};
+function _libSortHtml() {
+  var cur = _librarySort();
+  var opts = LIBRARY_SORTS.map(function(k) {
+    return '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' +
+      esc(t(_LIBRARY_SORT_LABELS[k])) + '</option>';
+  }).join('');
+  return '<select class="lib-sort" aria-label="' + escAttr(t('library_sort')) +
+    '" title="' + escAttr(t('library_sort')) +
+    '" onchange="event.stopPropagation();_setLibrarySort(this.value)"' +
+    ' onclick="event.stopPropagation()">' + opts + '</select>';
+}
+
 // Place the segmented view toggle on the first section header (Favorites, or the
 // first category/collection) — a global control that reuses the first header's
 // line rather than a bar of its own. No-op when there is no header to host it.
@@ -3344,7 +3393,8 @@ function _placeViewToggle() {
   var heading = output.querySelector('.cat-heading');
   if (!heading || heading.querySelector('.lib-view-toggle')) return;
   heading.classList.add('has-view-toggle');
-  heading.insertAdjacentHTML('beforeend', _libViewToggleHtml());
+  heading.insertAdjacentHTML('beforeend',
+    '<span class="lib-controls">' + _libSortHtml() + _libViewToggleHtml() + '</span>');
 }
 
 // ── About this ZIM: provenance badges, and the panel behind them ────────────
@@ -9908,7 +9958,14 @@ function _autoUpdateSelectHtml(au) {
   var lock = au.locked
     ? ' disabled title="' + escAttr(t('au_controlled_by_env')) + '" style="' + _AU_SELECT_CSS + ';opacity:0.5"'
     : ' style="' + _AU_SELECT_CSS + '"';
-  return '<select id="auto-update-freq" onchange="toggleAutoUpdate()"' + lock + '>' + opts + '</select>';
+  var select = '<select id="auto-update-freq" onchange="toggleAutoUpdate()"' + lock + '>' + opts + '</select>';
+  // A greyed-out control with the reason hidden in a hover tooltip reads as
+  // broken, and did (#69): the reporter saw "Daily" that would not change and
+  // no way to learn why. The reason goes beside it.
+  if (au.locked) {
+    select += '<div class="ms-hint au-why">' + tH('au_controlled_by_env') + '</div>';
+  }
+  return select;
 }
 
 // One label/value row, which is the shape every settings row in these panes
@@ -10901,6 +10958,13 @@ async function _renderSeedingSection() {
     : bt.status === 'unavailable' ? '#d9a13d' : 'var(--text3)';
   const stateLabel = starting ? t('bt_state_starting') : t('bt_state_' + bt.status);
   statusEl.innerHTML = '<span class="share-port-dot" style="background:' + stColor + '"></span>' + esc(stateLabel);
+  // The server already works out WHY it is off — no wheel for this Python, or
+  // the switch is set by the environment. Saying only "unavailable" leaves the
+  // person with nothing to do about it (#70).
+  if (bt.hint) {
+    statusEl.innerHTML += '<div class="ms-hint bt-why">' + esc(bt.hint) + '</div>';
+    statusEl.title = bt.hint;
+  }
   window._btStatusHtml = statusEl.innerHTML;
   // Port reachability dot, updated in place (no row rebuild).
   const pdot = document.getElementById('share-port-dot');

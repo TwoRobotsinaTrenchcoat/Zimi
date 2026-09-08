@@ -1546,5 +1546,10 @@
   "create_beta_report": "أخبرنا عن الموقع",
   "zi_shot_alt": "The live page as it looked when this ZIM was made",
   "zi_shot_caption": "The live page, when this was captured",
-  "zi_shot_zim_caption": "The same page, as this ZIM serves it"
+  "zi_shot_zim_caption": "The same page, as this ZIM serves it",
+  "library_sort": "ترتيب",
+  "sort_alpha": "أ–ي",
+  "sort_added": "المضافة حديثًا",
+  "sort_updated": "المحدَّثة حديثًا",
+  "sort_entries": "الأكثر مقالات"
 }
