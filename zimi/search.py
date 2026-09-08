@@ -396,6 +396,36 @@ def _title_index_is_current(zim_name, zim_path):
     return _index_is_current(path_fn(zim_name), zim_path, _TITLE_INDEX_VERSION)
 
 
+def _capture_page_paths(archive):
+    """The set of entry paths a capture recorded as its pages, or None.
+
+    None means "this ZIM does not say", which is every ZIM Zimi did not make
+    and every capture written before the record existed."""
+    try:
+        from zimi import zimpatch
+
+        record = zimpatch.read_record(archive)
+    except Exception:
+        return None
+    if not record:
+        return None
+    paths = {
+        p.get("path")
+        for p in record.get("pages") or []
+        if isinstance(p, dict) and p.get("path")
+    }
+    return paths or None
+
+
+def _looks_like_a_page(entry):
+    """Whether an entry is a document rather than something a document loads."""
+    try:
+        mimetype = (entry.get_item().mimetype or "").lower()
+    except Exception:
+        return False
+    return mimetype.startswith("text/html") or mimetype == "application/pdf"
+
+
 def _build_title_index(zim_name, zim_path):
     """Build SQLite title index for a ZIM file.
 
@@ -422,16 +452,31 @@ def _build_title_index(zim_name, zim_path):
 
         batch = []
         total_entries = archive.all_entry_count
+        # A capture ZIM says which of its entries are pages. Without that, the
+        # index takes all of them: one two-page site put 816 rows in, almost
+        # all asset URLs, and because the vocabulary behind "did you mean" is
+        # built from these indexes, the WHOLE LIBRARY started offering `com`
+        # and `githubusercontent` as corrections for ordinary English words.
+        pages = _capture_page_paths(archive)
         for i in range(total_entries):
             try:
                 entry = archive._get_entry_by_id(i)
                 if entry.is_redirect:
                     continue
                 path = entry.path
-                # Skip asset paths by extension
-                dot = path.rfind(".")
-                if dot != -1 and path[dot:].lower() in _srv._ASSET_EXTS:
-                    continue
+                if pages is not None:
+                    if path not in pages:
+                        continue
+                else:
+                    # Skip asset paths by extension
+                    dot = path.rfind(".")
+                    if dot != -1 and path[dot:].lower() in _srv._ASSET_EXTS:
+                        continue
+                    # An asset URL carrying a query string (`app.js?v=2`) has
+                    # no recognisable extension, so the test above misses it
+                    # and every image, script and font arrives as a "title".
+                    if not _looks_like_a_page(entry):
+                        continue
                 title = entry.title
                 if not title:
                     continue
@@ -2480,6 +2525,22 @@ def random_entry(archive, max_attempts=8, rng=None):
     # Phase 1: Random entry by index (O(1) per attempt, works on all ZIMs)
     total = archive.entry_count
     if total > 0:
+        # A capture knows its own pages, so there is nothing to sample for.
+        # Without this, a site whose 876 entries hold 2 pages is sampled eight
+        # times at random and answers "no articles found" almost always, which
+        # took out the Discover card and the agent API's random tool.
+        pages = _capture_page_paths(archive)
+        if pages:
+            for path in rng.sample(sorted(pages), min(len(pages), max_attempts)):
+                try:
+                    entry = archive.get_entry_by_path(path)
+                    title = entry.title or ""
+                    if _meta_title_re.search(title):
+                        continue
+                    return {"path": entry.path, "title": title}
+                except Exception as e:
+                    log.debug("Recorded page %s could not be read: %s", path, e)
+
         for _ in range(max_attempts):
             idx = rng.randint(0, total - 1)
             try:

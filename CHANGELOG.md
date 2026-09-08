@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.9.3] - 2026-09-07
 
+### Added
+
+- **A capture's ZIM now carries what only the capture could know.** The alive and zimit engines hand a WARC to warc2zim, which writes the ZIM and accepts nine flags, so everything Zimi learned was dropped at that door. The file is now rewritten once at creation (about a second on a 15.7 MB capture, same size) to add: which entries are pages, the source URL warc2zim parses and never writes, the two pictures, and a capture record under `X-Zimi-Capture`. Only standard fields used as the spec intends plus `X-` metadata, so the ZIM opens in any other viewer — and Kiwix gets a better file too, since its own random and suggestions read the same page flag.
+- **One capture no longer degrades the whole library's search suggestions.** The title index took every entry, so a two-page site contributed 816 rows of asset URLs and the library's shared vocabulary filled with `com`, `avatars` and `githubusercontent` — searching "coma" was corrected to "com". It now indexes pages: 816 rows became 1.
+- **Random article works on a capture**, which also restores the Discover card and the agent API's random tool. A ZIM with 2 pages among 876 entries was sampled at random eight times and answered "no articles found" almost every time.
+
 ### Fixed
 
 - **A capture made with the alive or zimit engine now keeps its two pictures too.** 1.9.2 shipped the feature without them, which left the engine most likely to produce a doubtful capture as the one engine that could not show you. warc2zim writes those ZIMs, takes no arbitrary metadata, and seals the file, so their pictures are kept beside the library instead and the same two routes serve them. The packaged picture is taken from the finished file by serving its own entries to the browser. Deleting a ZIM drops them.

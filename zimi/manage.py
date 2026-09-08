@@ -5563,15 +5563,6 @@ def handle_manage_post(handler, parsed, data):
             except Exception as e:
                 log.debug("Handle release before deleting %s: %s", filename, e)
             os.remove(filepath)
-            # Pictures kept beside the library (the engines whose ZIM warc2zim
-            # writes) would otherwise outlive the file they describe, and be
-            # served for the next ZIM to take the same name.
-            try:
-                from zimi import shotstore as _shotstore
-
-                _shotstore.forget(_srv.ZIMI_DATA_DIR, _srv._zim_short_name(filename))
-            except Exception as e:
-                log.debug("could not drop stored pictures for %s: %s", filename, e)
             log.info(f"Deleted ZIM: {filename}")
             record_activity(
                 "delete",

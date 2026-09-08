@@ -70,7 +70,7 @@ from zimi.creator import (
     resolve_language,
     scratch_dir,
 )
-from zimi import shotstore
+from zimi import zimpatch
 from zimi.warc import WarcWriter
 from zimi.zimwriter import _slug, scraper_string, shot_verdict
 
@@ -338,23 +338,20 @@ def _convert(archive, out, *, zim_name, note, **fields):
     return out
 
 
-def store_pictures(out, live_shot, note=None):
-    """Keep this capture's two pictures beside the library.
+def finish_zim(out, *, seed_url, pages, assets, live_shot, blocked=None, note=None):
+    """Put into the ZIM what only this capture could know.
 
-    warc2zim wrote the ZIM, so there is no metadata to add them to and no way
-    to add one to a sealed file that does not mean rewriting it. They go in the
-    store instead, where the same two routes serve them (``zimi.shotstore``).
+    warc2zim wrote the file and takes no arbitrary metadata, so this is where
+    Zimi's side of the capture lands: which entries are pages (the field every
+    viewer reads for that, which the converter can only guess at), the source
+    URL it parses and never writes, the capture record, and the two pictures.
 
-    The live picture came from the recording pass. The packaged one is taken
-    here, from the finished file, by serving its own entries to a browser.
+    The packaged picture is taken here and not earlier, because the page as
+    the ZIM serves it does not exist until the ZIM does.
 
-    Never raises: a capture that succeeded must not fail over a picture."""
+    Never raises. A capture that succeeded is not lost to an enrichment step:
+    on any trouble the file stays exactly as the converter wrote it."""
     say = note or (lambda _m: None)
-    stored = {"live": False, "zim": False}
-    name = os.path.splitext(os.path.basename(out))[0]
-    if live_shot and shotstore.save(_srv.ZIMI_DATA_DIR, name, "live", live_shot):
-        stored["live"] = True
-        say("stored a picture of the live page")
     packaged = None
     try:
         from zimi.renderer import RenderedSession
@@ -363,10 +360,17 @@ def store_pictures(out, live_shot, note=None):
             packaged = session.shoot_zim_file(out)
     except Exception as e:
         log.debug("no packaged picture for %s: %s", out, e)
-    if packaged and shotstore.save(_srv.ZIMI_DATA_DIR, name, "zim", packaged):
-        stored["zim"] = True
-        say("stored a picture of the packaged page")
-    if stored["live"] and stored["zim"]:
+    record = zimpatch.build_record(
+        seed_url=seed_url,
+        engine=ENGINE_NAME,
+        pages=pages,
+        assets=assets,
+        blocked=blocked or None,
+    )
+    patched = zimpatch.patch(
+        out, record, live_shot=live_shot, packaged_shot=packaged, note=say
+    )
+    if patched and packaged and live_shot:
         _, short = shot_verdict(live_shot, packaged)
         if short:
             say(
@@ -374,7 +378,11 @@ def store_pictures(out, live_shot, note=None):
                 "so something did not survive capture. Compare the two "
                 "pictures in About."
             )
-    return stored
+    return {
+        "live": bool(patched and live_shot),
+        "zim": bool(patched and packaged),
+        "recorded": bool(patched),
+    }
 
 
 def _shelf_icon(url, zim_name):
@@ -514,7 +522,15 @@ def create_alive_page_zim(
             creator_name=creator_name,
             source=final_url,
         )
-        pictures = store_pictures(out, capture.last_shot, note)
+        pictures = finish_zim(
+            out,
+            seed_url=final_url,
+            pages=[{"url": final_url, "title": zim_title}],
+            assets=capture.count,
+            live_shot=capture.last_shot,
+            blocked=blocked or None,
+            note=note,
+        )
     except BaseException:
         capture.discard()
         raise
@@ -705,7 +721,18 @@ def create_alive_site_zim(
             # The seed page's live picture, taken on the first fetch of the
             # crawl, beside a picture of the site's front page as the ZIM
             # serves it.
-            pictures = store_pictures(out, capture.last_shot, note)
+            pictures = finish_zim(
+                out,
+                seed_url=seed_url,
+                pages=[
+                    {"url": p.get("final_url") or "", "title": p.get("title") or ""}
+                    for p in pages
+                ],
+                assets=capture.count,
+                live_shot=capture.last_shot,
+                blocked=blocked or None,
+                note=note,
+            )
     except BaseException:
         capture.discard()
         raise
