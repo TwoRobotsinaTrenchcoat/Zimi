@@ -2779,7 +2779,6 @@ def load_cache(force=False):
                 "size_gb": entry["size_gb"],
                 "entries": entry["entries"],
                 "title": entry["title"],
-                "faces": entry.get("faces"),
                 "description": entry["description"],
                 "date": entry.get("date", ""),
                 "language": entry.get("language", ""),
@@ -2790,6 +2789,11 @@ def load_cache(force=False):
                 new_cached["article_count"] = entry["article_count"]
             if entry.get("zimi_export"):
                 new_cached["zimi_export"] = True
+            # Only when the capture kept two: most ZIMs have one face, and a
+            # cache full of nulls is noise. An older Zimi reading this record
+            # ignores the key, which is what keeps a downgrade safe.
+            if entry.get("faces"):
+                new_cached["faces"] = entry["faces"]
             if first_seen is not None:
                 new_cached["first_seen"] = first_seen
             if updated_at is not None:
