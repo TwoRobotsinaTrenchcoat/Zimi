@@ -220,11 +220,9 @@ BLOCK_ABORT_CODE = "blockedbyclient"
 # not a fetch, so this is a frame or two rather than a network wait.
 FACE_SETTLE = 0.35
 
-# What "this page looks different" means, cheaply: the painted colours of the
-# document and of a sample of what is on it. Comparing whole serialized
-# documents would call every page different, because scripts stamp ids and
-# timestamps into the DOM between two reads of the same page.
-_FACE_FINGERPRINT_JS = """() => {
+# What "this site paints differently" means, cheaply and without touching
+# anything: the colours of the document and of a sample of what is on it.
+_FACE_COLOURS_JS = """() => {
   const seen = [];
   for (const el of [document.documentElement, document.body]) {
     if (!el) continue;
@@ -1358,18 +1356,24 @@ class RenderedSession:
             # is the half of the comparison that stops existing the moment the
             # site changes.
             shot = _shoot(page, url)
-            # The site other face, if it has one. Taken here, from the page
-            # already loaded and settled, because flipping the media query is a
-            # repaint while a second visit is another download -- and the two
-            # visits could disagree about more than the theme. Read BEFORE
-            # _PREPARE_JS, which serializes and mutates.
-            other = self._other_face(page, url)
+            # Does this site have a second face? Asked here, while the page is
+            # still live and BEFORE _PREPARE_JS strips its scripts, and asked
+            # without changing anything: flip the media query, look at the
+            # painted colours, flip back.
+            two_faced = self._has_second_face(page)
             try:
                 html = page.evaluate(_PREPARE_JS)
             except Exception as e:
                 raise CreateError(
                     f"cannot read {url} after rendering it: " f"{_playwright_reason(e)}"
                 )
+            # And then fetch it, on a page of its own. It cannot be taken from
+            # this one: _PREPARE_JS has stripped the scripts that would react
+            # to the theme, and it mutates what it serializes, so a second
+            # pass here would either see nothing change or corrupt the capture
+            # that matters. A whole extra visit, only for the sites that have
+            # two faces.
+            other = self._other_face(url) if two_faced else None
             if recorded is None:
                 resources, doc_bytes = self._collect(responses, final_url)
             else:
@@ -1390,38 +1394,65 @@ class RenderedSession:
         page_out.other_face = other
         return page_out
 
-    def _other_face(self, page, url):
-        """``(scheme, html)`` for the face this capture is NOT taking, or None.
+    def _has_second_face(self, page):
+        """Whether this site paints differently for the other colour scheme.
 
-        A site with a dark mode written as a media query serves a different
-        page to a reader who prefers dark, and a capture could only ever keep
-        one of them. Both are worth having: the reader shows whichever matches
-        the theme in front of the person, so a captured site behaves the way
-        the live one did.
+        Non-destructive by construction: the media query is flipped, the
+        painted colours of the document and a sample of what is on it are
+        compared, and the flip is undone. Nothing is serialized and nothing is
+        removed, so the capture this is measured during is unaffected.
 
-        A site whose theme is a class some script sets from localStorage does
-        not flip here, and that is the honest answer: nothing on the page
-        changed, so there is no second face to keep.
-
-        Never raises and never disturbs the capture. On any trouble the page
-        is put back the way it was and the answer is None."""
+        False for most of the web, which is the point: the second visit that
+        follows is only worth its seconds when there is something to fetch."""
         want = "light" if (self._color_scheme or "light") == "dark" else "dark"
         try:
-            before = page.evaluate(_FACE_FINGERPRINT_JS)
+            before = page.evaluate(_FACE_COLOURS_JS)
             page.emulate_media(color_scheme=want)
             page.wait_for_timeout(int(FACE_SETTLE * 1000))
-            after = page.evaluate(_FACE_FINGERPRINT_JS)
-            if after == before:
-                return None
-            return (want, page.evaluate(_PREPARE_JS))
+            after = page.evaluate(_FACE_COLOURS_JS)
+            return after != before
         except Exception as e:
-            log.debug("no second face for %s: %s", url, e)
-            return None
+            log.debug("could not test for a second face: %s", e)
+            return False
         finally:
             try:
                 page.emulate_media(color_scheme=self._color_scheme or "no-preference")
             except Exception:
                 pass
+
+    def _other_face(self, url):
+        """``(scheme, html)`` for the face this capture is not taking, or None.
+
+        Its own visit, in the other colour scheme, because the face a site
+        shows is decided by the page as it loads — by CSS, or by a script
+        reading the preference — and both of those want a live page.
+
+        Never raises: a second face is a courtesy and a capture must not fail
+        for one."""
+        want = "light" if (self._color_scheme or "light") == "dark" else "dark"
+        page = None
+        try:
+            page = self._context.new_page()
+            page.emulate_media(color_scheme=want)
+            page.goto(
+                url, wait_until="domcontentloaded", timeout=int(NAV_TIMEOUT * 1000)
+            )
+            self._quiet(page, QUIET_TIMEOUT)
+            self._reveal(page)
+            self._quiet(page, SCROLL_QUIET_TIMEOUT)
+            self._image_settle(page)
+            self._settle_further(page)
+            html = page.evaluate(_PREPARE_JS)
+            return (want, html) if html else None
+        except Exception as e:
+            log.debug("no second face for %s: %s", url, e)
+            return None
+        finally:
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
 
     def shoot_live(self, url):
         """A picture of the live page, settled exactly as a capture settles it.
