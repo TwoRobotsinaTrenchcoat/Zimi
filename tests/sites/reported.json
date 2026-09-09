@@ -11,10 +11,9 @@
         "expect_text_change": true
       },
       "also_check": {
-        "why": "the palette's theme switch, which is what #64 is still about",
+        "why": "the palette's theme switch — the half of #64 that needed the loader shim",
         "click_text": "Alucard",
-        "expect_text_change": true,
-        "known_broken": "The page does not hydrate in replay. Verified 2026-09-08: every chunk is in the ZIM, all inline scripts parse, no console/page/rejection errors, the RSC payload sits unconsumed (__next_f keeps 8 entries where the live page drains it to 0), and React never mounts. It fails identically with the ZIM served bare, no Zimi reader involved, so it is warc2zim/wabac replay and not ours. Neither the shipped block-globals patch nor the full upstream fix (python-scraperlib#335) changes it."
+        "expect_text_change": true
       }
     },
     {

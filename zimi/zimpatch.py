@@ -47,6 +47,52 @@ RECORD_VERSION = 1
 _GENERATED_METADATA = {"Counter"}
 
 
+# ── the module-loader shim ──────────────────────────────────────────────────
+#
+# warc2zim stores a page's references relative, so `src="/_next/app.js"` in the
+# served HTML becomes `src="_next/app.js"` in the ZIM. That is right for the
+# browser, which resolves it against the page, and wrong for the page's own
+# JavaScript, which sometimes reads the attribute back and expects the shape
+# the server sent.
+#
+# Turbopack — what Next.js builds with now — is exactly that case. Its runtime
+# identifies a chunk by `script.getAttribute("src")` and strips a leading
+# `/_next/` to get the key it filed that chunk under. With the slash gone the
+# strip fails, every chunk registers under a name nothing is waiting for, and
+# the entry module never runs: no error, no failed request, a page that renders
+# and does nothing. draculatheme.com/contribute is the reported case (#64) —
+# 191 module factories run on the live site, none in the ZIM.
+#
+# wombat already patches the `.src` PROPERTY to answer with the original URL.
+# This does the same for the attribute, and only for scripts, deriving the
+# answer from that same patched property so the two agree. Anything wombat is
+# not there for, or any element that is not a script, is untouched.
+LOADER_SHIM = (
+    "<script>(function(){try{"
+    "var orig=Element.prototype.getAttribute;"
+    "Element.prototype.getAttribute=function(name){"
+    "var v=orig.call(this,name);"
+    'if(name==="src"&&this.tagName==="SCRIPT"&&typeof v==="string"&&v'
+    '&&v.charAt(0)!=="/"&&!/^[a-z]+:/i.test(v)&&v.indexOf("//")!==0){'
+    "try{var u=new URL(this.src);return u.pathname+u.search;}catch(e){}}"
+    "return v;};}catch(e){}})();</script>"
+)
+
+# Where it has to go: after wombat has installed its property patches, and
+# before the page's own scripts run.
+_SHIM_ANCHOR = 'wombatSetup.js"></script>'
+SHIM_MARKER = "zimi-loader-shim"
+
+
+def _with_loader_shim(html):
+    """The page with the shim installed, or unchanged when there is nowhere
+    to put it or it is already there."""
+    if SHIM_MARKER in html or _SHIM_ANCHOR not in html:
+        return html
+    marked = LOADER_SHIM.replace("<script>", f'<script data-{SHIM_MARKER}="1">', 1)
+    return html.replace(_SHIM_ANCHOR, _SHIM_ANCHOR + marked, 1)
+
+
 def _pages_by_path(pages):
     """``{zim path: page}`` for the pages this capture visited.
 
@@ -207,6 +253,15 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
                 continue
             item = entry.get_item()
             page = pages.get(path)
+            data = bytes(item.content)
+            if page is not None and "html" in (item.mimetype or ""):
+                try:
+                    text = data.decode("utf-8")
+                    fixed = _with_loader_shim(text)
+                    if fixed != text:
+                        data = fixed.encode("utf-8")
+                except UnicodeDecodeError:
+                    pass
             try:
                 creator.add_item(
                     _Copied(
@@ -216,7 +271,7 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
                         # what the served HTML happened to carry.
                         (page or {}).get("title") or item.title,
                         item.mimetype,
-                        bytes(item.content),
+                        data,
                         bool(page),
                     )
                 )

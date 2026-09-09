@@ -14974,10 +14974,26 @@ function openReader(url) {
     // wiktionary ZIM is installed). Works in the normal reader AND Reader View
     // (same document, listeners attached once per load survive the transform).
     try { _defineAttachToDoc(frame); } catch(e) {}
-    // A consent wall that the ARCHIVE rebuilds every time it is opened.
-    try { _sweepBlockingOverlays(frame); } catch(e) {}
-    // A captured page's JS-driven chrome, put back in its place.
-    try { _settleCapturedChrome(frame); } catch(e) {}
+    // A consent wall the ARCHIVE rebuilds every time it is opened, and a
+    // captured page's JS-driven chrome put back in its place. Both edit the
+    // article's DOM, which is safe on a frozen capture and NOT safe on one
+    // whose scripts still run: an alive capture hydrates a moment after load,
+    // and React finding the DOM changed under it throws
+    // "removeChild: the node to be removed is not a child" and re-renders a
+    // stump. draculatheme.com came out with its palette gone (#64) — the page
+    // worked in a bare iframe and broke in ours, which is the tell.
+    //
+    // So on a live replay they wait for the page to finish waking up. The
+    // delay is not a guess about React: it is the same settle the reader
+    // already gives a captured page before it measures anything.
+    var _replayAlive = false;
+    try { _replayAlive = !!(frame.contentWindow && frame.contentWindow._wb_wombat); } catch (e) {}
+    var _settlePasses = function() {
+      try { _sweepBlockingOverlays(frame); } catch(e) {}
+      try { _settleCapturedChrome(frame); } catch(e) {}
+    };
+    if (_replayAlive) setTimeout(_settlePasses, REPLAY_SETTLE_MS);
+    else _settlePasses();
     // Inject responsive CSS + scroll-to-top button for mobile
     try {
       // Web-mirror pages (alive engine, zimit) ship a browser's-eye recording of
@@ -17912,6 +17928,11 @@ function _isHollow(el) {
 // Runs on every ZIM. Each rule only fires on the exact condition it names, and
 // a Wikipedia article has no empty ad slots, nothing sticky that matters, and
 // nothing that pulses.
+// How long a replayed page is given to wake up before Zimi touches its DOM.
+// Long enough for a React app to hydrate on a slow machine, short enough that
+// a consent wall is not left standing while somebody reads.
+var REPLAY_SETTLE_MS = 2500;
+
 function _settleCapturedChrome(frame) {
   var doc = frame.contentDocument;
   var win = frame.contentWindow;
