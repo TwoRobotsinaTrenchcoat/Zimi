@@ -353,11 +353,39 @@ class TestServerEndpoints(unittest.TestCase):
         self.assertIn("zim_count", data)
 
     def test_manage_catalog_fetch(self):
-        """Test that the catalog endpoint reaches the OPDS proxy."""
-        # This will try to fetch from Kiwix's OPDS feed. If internet is
-        # unavailable (CI), it returns a 502 — both outcomes are valid.
-        status = self._get_status("/manage/catalog?count=1")
-        self.assertIn(status, (200, 502))
+        """The catalog endpoint answers from whatever the fetcher returns.
+
+        It used to call Kiwix's real OPDS feed and accept 200 or 502, which
+        made the whole matrix depend on the internet: a slow runner timed the
+        CLIENT out before either status arrived, and the failure was a red
+        badge on the README rather than anything about Zimi. The upstream call
+        is stubbed now, so this tests our proxy — which is all it ever claimed
+        to test."""
+        import zimi.server as _srv
+
+        original = _srv._fetch_kiwix_catalog
+        _srv._fetch_kiwix_catalog = lambda *a, **k: (
+            1,
+            [{"name": "fixture_en_all", "title": "Fixture", "size": 1}],
+            None,
+        )
+        try:
+            data, status = self._get("/manage/catalog?count=1")
+            self.assertEqual(status, 200)
+            self.assertEqual(data.get("total"), 1)
+        finally:
+            _srv._fetch_kiwix_catalog = original
+
+    def test_manage_catalog_reports_an_upstream_failure(self):
+        """And when the feed cannot be reached, it says so rather than 500."""
+        import zimi.server as _srv
+
+        original = _srv._fetch_kiwix_catalog
+        _srv._fetch_kiwix_catalog = lambda *a, **k: (0, [], "upstream unreachable")
+        try:
+            self.assertEqual(self._get_status("/manage/catalog?count=1"), 502)
+        finally:
+            _srv._fetch_kiwix_catalog = original
 
     def test_manage_download_missing_url(self):
         data, status = self._post("/manage/download", {})
