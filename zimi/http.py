@@ -1076,8 +1076,10 @@ def _faces_summary(meta):
         faces = _json.loads(raw)
     except Exception:
         return None
-    other = (faces or {}).get("other") or {}
-    if not other.get("path") or not other.get("scheme"):
+    if not isinstance(faces, dict):
+        return None
+    other = faces.get("other")
+    if not isinstance(other, dict) or not other.get("path") or not other.get("scheme"):
         return None
     return {"main": faces.get("main", ""), "other": other}
 

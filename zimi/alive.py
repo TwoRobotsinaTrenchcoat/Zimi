@@ -279,9 +279,17 @@ class AliveCapture:
         self.start()
         page = self._session.capture(url)
         # The recording pass photographs the live page like every other engine.
-        # Kept here because the ZIM this capture ends in is written by warc2zim
-        # and cannot carry it; the store beside the library can.
-        self.last_shot = getattr(page, "shot", None)
+        # Kept here because the ZIM this capture ends in is written by warc2zim,
+        # which cannot carry it.
+        #
+        # The FIRST page only. A crawl calls this for every URL in the
+        # frontier, so assigning each time left the "live page" picture showing
+        # whichever page the crawl happened to end on, while the packaged
+        # picture is the site's front page — two unrelated pages presented as
+        # before and after, and a height comparison between them that could
+        # warn about a collapse that never happened.
+        if self.last_shot is None:
+            self.last_shot = getattr(page, "shot", None)
         # Nothing was spooled — the recorder path collects no resources — but
         # discarding is what makes that a fact rather than an assumption.
         page.discard()

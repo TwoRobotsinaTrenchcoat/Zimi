@@ -1404,6 +1404,13 @@ class RenderedSession:
 
         False for most of the web, which is the point: the second visit that
         follows is only worth its seconds when there is something to fetch."""
+        # A recording pass (the alive engine) never reads the second face: its
+        # archive is what becomes the ZIM, and a second visit is not recorded
+        # into it. Asking anyway would double the wall time and the bandwidth
+        # of every alive capture of a site with a dark mode, which is much of
+        # the modern web, for something nothing would ever read.
+        if self._recorder is not None:
+            return False
         want = "light" if (self._color_scheme or "light") == "dark" else "dark"
         try:
             before = page.evaluate(_FACE_COLOURS_JS)

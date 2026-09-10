@@ -2328,8 +2328,10 @@ def _read_faces(archive):
         faces = json.loads(raw.decode("utf-8", errors="replace"))
     except Exception:
         return None
-    other = (faces or {}).get("other") or {}
-    if not isinstance(faces, dict) or not other.get("path"):
+    if not isinstance(faces, dict):
+        return None
+    other = faces.get("other")
+    if not isinstance(other, dict) or not other.get("path"):
         return None
     return faces
 
