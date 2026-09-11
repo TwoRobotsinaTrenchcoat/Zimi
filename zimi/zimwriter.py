@@ -2169,6 +2169,34 @@ def shot_verdict(live, packaged):
     return dims, b[1] < a[1] * SHOT_SHORT_RATIO
 
 
+# The event that tells a watching page a picture of the source exists. Only the
+# fact travels on the progress channel — the bytes are hundreds of kilobytes
+# and the channel is polled JSON, so the page fetches the picture itself.
+SHOT_EVENT = "shot"
+
+
+def announce_shot(note, jpeg):
+    """Hand the picture of the live page to whoever is watching.
+
+    It is taken early — seconds into a job that can run for minutes — and until
+    now was only ever seen after the ZIM existed. Eric, 2026-09-11: "if we're
+    taking a screenshot of source why not splash that up at the top while
+    creating."
+
+    The bytes ride on the event and the receiving sink is expected to take them
+    off it: they are hundreds of kilobytes, and the web sink's event tail is
+    polled JSON. A sink that does not care about pictures ignores the event
+    whole, which is what every terminal sink does with every event.
+
+    Raises nothing of its own, and deliberately does not swallow: the progress
+    sink is also the cancellation checkpoint, and an engine that ate the
+    cancel here would keep working after the admin pressed stop."""
+    if not jpeg or note is None:
+        return False
+    note({"event": SHOT_EVENT, "jpeg": jpeg})
+    return True
+
+
 def add_packaged_shot(creator, jpeg):
     """Store the picture of the page as this ZIM serves it."""
     return _add_shot(creator, jpeg, SHOT_ZIM_METADATA_KEY)

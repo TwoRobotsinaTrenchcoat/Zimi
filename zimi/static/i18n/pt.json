@@ -814,6 +814,7 @@
   "create_language": "Idioma",
   "create_language_auto": "Detetar automaticamente",
   "create_log": "Registo do servidor",
+  "create_shot_alt": "A página a ser capturada",
   "create_max_bytes": "Limite de tamanho",
   "create_max_depth": "Profundidade máx.",
   "create_max_pages": "Máx. de páginas",

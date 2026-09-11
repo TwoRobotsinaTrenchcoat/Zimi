@@ -814,6 +814,7 @@
   "create_language": "语言",
   "create_language_auto": "自动检测",
   "create_log": "服务器日志",
+  "create_shot_alt": "正在捕获的页面",
   "create_max_bytes": "大小上限",
   "create_max_depth": "最大深度",
   "create_max_pages": "最多页数",

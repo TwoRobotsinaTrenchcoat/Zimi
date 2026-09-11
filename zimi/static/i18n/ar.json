@@ -814,6 +814,7 @@
   "create_language": "اللغة",
   "create_language_auto": "اكتشاف تلقائي",
   "create_log": "سجل الخادم",
+  "create_shot_alt": "الصفحة التي يتم التقاطها",
   "create_max_bytes": "حد الحجم",
   "create_max_depth": "أقصى عمق",
   "create_max_pages": "أقصى عدد صفحات",

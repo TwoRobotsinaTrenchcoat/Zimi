@@ -814,6 +814,7 @@
   "create_language": "Язык",
   "create_language_auto": "Определить автоматически",
   "create_log": "Журнал сервера",
+  "create_shot_alt": "Захватываемая страница",
   "create_max_bytes": "Лимит размера",
   "create_max_depth": "Макс. глубина",
   "create_max_pages": "Макс. страниц",

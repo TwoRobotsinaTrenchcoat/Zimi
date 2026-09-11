@@ -17,10 +17,10 @@ Every fix here is verified the way the reporter would see it: reproduce the lite
 
 ### Create page
 
-- [ ] **The address is not probed until the field loses focus.** Someone can paste and hit Create without the probe ever running, and silently get a worse result than the probe would have chosen.
-- [ ] **The source screenshot is taken but never shown while the job runs.** It exists; put it at the top of the running job.
-- [ ] **The preview and title from the last run persist into the next one.** A finished job should leave the form fresh.
-- [ ] **Periodic snapshots from the headless browser while a job runs.** Eric's own words: "might be overkill." Decide, do not drift.
+- [x] **The address is not probed until the field loses focus.** — *fixed both ways: typing asks after a 600ms pause, and Create waits for an unanswered probe before starting, then re-reads the form because the answer can move the mode and the engine.*
+- [x] **The source screenshot is taken but never shown while the job runs.** — *done. The engines announce the picture on the progress channel the moment they have it, the job holds the bytes, and `/manage/create/shot` serves them. It appears at the top of the run, cropped to its first 180px.*
+- [x] **The preview and title from the last run persist into the next one.** — *fixed: a finished run clears the address, the title, the preview and every per-mode stash — but only when the form still holds the job that just finished, so typing the next address while the last one runs is never taken away.*
+- [x] **Periodic snapshots from the headless browser while a job runs.** — *not built, deliberately. The one picture of the source now appears within seconds and is the thing that was missing. A stream of them costs a screenshot per interval on a NAS that is already the bottleneck, for a page that mostly does not change. Revisit if the run screen still feels dead.*
 
 ### Capture fidelity
 
@@ -39,6 +39,10 @@ Every fix here is verified the way the reporter would see it: reproduce the lite
 ### Question to answer, not a defect
 
 - [ ] **Update track.** Confirm what `beta` means: a draft release with artifacts that Eric has not yet published.
+
+### Found mid-flight, not on Eric's list
+
+- [x] **Zombie subprocesses on the NAS.** Eric, 2026-09-11: 20 zombies in 21 hours of uptime — 12 chrome-headless, 7 python3, 1 wget. Both streaming runners reaped the child only on the happy path, so every cancel skipped the kill AND the reap: a browser kept reading from a saturated disk for a capture already thrown away. — *fixed in `zimi/subproc.py`: a process group per child, killed and collected in a `finally`. `init: true` added to all three compose files as a backstop.*
 
 ## Out of scope for this cut
 

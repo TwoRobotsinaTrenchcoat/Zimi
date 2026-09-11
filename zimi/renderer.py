@@ -3140,6 +3140,7 @@ class RenderedCapture:
             capture_variants=capture_variants,
         )
         self._budget = budget
+        self._note = note or (lambda _m: None)
         self.carried = {} if carried is None else carried
         self.mimetypes = set()
         self.count = 0
@@ -3197,6 +3198,11 @@ class RenderedCapture:
         page = self._pages.pop(final_url, None)
         resources = page.resources if page is not None else {}
         self.last_shot = getattr(page, "shot", None)
+        # Imported here rather than at module scope: zimwriter is the writer
+        # stack, and a renderer that only ever renders should not pull it in.
+        from zimi.zimwriter import announce_shot
+
+        announce_shot(self._note, self.last_shot)
         assets = RenderedAssets(
             sink,
             resources,

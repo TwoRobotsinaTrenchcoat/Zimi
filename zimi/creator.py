@@ -50,6 +50,7 @@ import zimi.server as _srv
 from zimi.blocklist import blocked_phrase
 from zimi.zimwriter import (
     SHOT_DIMS_METADATA_KEY,
+    announce_shot,
     shot_verdict,
     add_packaged_shot,
     add_capture_shot,
@@ -1992,6 +1993,7 @@ class BuiltinCapture:
         packaged = session.shoot_packaged(html, self._last_by_path, mainpath=mainpath)
         self._last_by_path = {}
         self.last_shot = live
+        announce_shot(self._note, live)
         return live, packaged
 
     def fetch(self, url):
@@ -2873,7 +2875,13 @@ def probe_folder(
 
 def _note(message):
     """Progress for the CLI: one line, flushed, so a forty-minute crawl looks
-    alive in a terminal and in a piped log alike."""
+    alive in a terminal and in a piped log alike.
+
+    Events are for the surfaces that can draw them. A terminal cannot draw a
+    picture of the page, and printing the event would put its JPEG on the
+    screen, so anything that is not a sentence is skipped here."""
+    if isinstance(message, dict):
+        return
     print(message, flush=True)
 
 

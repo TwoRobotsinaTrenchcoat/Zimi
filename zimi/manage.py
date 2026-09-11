@@ -2285,6 +2285,11 @@ class _CreateJob:
         # tick while the job runs and not at all after it ends — no thread
         # loitering behind a finished job with a sleep still to serve.
         self.settled = threading.Event()
+        # The picture of the live page, as soon as an engine has one — seconds
+        # into a job that can run for minutes. Held here rather than sent down
+        # the poll: it is hundreds of kilobytes of JPEG and the poll is JSON,
+        # so the event says it exists and the page fetches it once.
+        self.shot = None
 
     # -- output ------------------------------------------------------------
     def note(self, message):
@@ -2300,9 +2305,16 @@ class _CreateJob:
             raise _CreateCancelled()
         now = time.time()
         if isinstance(message, dict):
+            event = dict(message)
+            # The bytes come off the event before it is filed: the event tail
+            # is serialized to the client on every poll, and a JPEG in it would
+            # be both unserializable and enormous.
+            jpeg = event.pop("jpeg", None)
             with _create_lock:
                 self.progressed = now
-                self._push_events([dict(message)])
+                if jpeg:
+                    self.shot = jpeg
+                self._push_events([event])
             return
         text = str(message).rstrip("\n")
         # Derived outside the lock: it parses a string and may import a module,
@@ -3529,6 +3541,8 @@ def _create_status(cursor, probe=False, events_cursor=0, history=False):
                 "source": job.source,
                 "title": job.title,
                 "phase": job.phase,
+                # Not the picture, just whether there is one to ask for.
+                "has_shot": job.shot is not None,
                 "lines": lines,
                 "cursor": next_cursor,
                 "events": events,
@@ -4350,6 +4364,32 @@ def handle_manage_get(handler, parsed, params):
                 history=param("history") == "1",
             ),
         )
+    if parsed.path == "/manage/create/shot":
+        # The picture of the live page, while the job is still running. Same
+        # gate as the status poll it is announced on, and fetched once per job
+        # rather than ridden down the poll — it is a JPEG, not a status field.
+        denial = _creator_denial(handler)
+        if denial:
+            return handler._json(*denial)
+        job = _create_job
+        # The id is in the URL so each job's picture is its own resource and
+        # can be cached hard. Serving the current job's picture for a stale id
+        # would be the last run's page under this run's name.
+        wanted = param("job")
+        if job is None or (wanted and wanted != job.id):
+            return handler._json(404, {"error": "no picture for this job"})
+        shot = job.shot
+        if not shot:
+            return handler._json(404, {"error": "no picture for this job"})
+        handler.send_response(200)
+        handler.send_header("Content-Type", "image/jpeg")
+        handler.send_header("Content-Length", str(len(shot)))
+        # A job's picture never changes once taken, and the job id is in the
+        # URL, so it can be cached hard. A new job is a new URL.
+        handler.send_header("Cache-Control", "private, max-age=3600")
+        handler.end_headers()
+        handler.wfile.write(shot)
+        return
     if parsed.path == "/manage/create/browse":
         # The folder picker's feed, and folder mode left the web (CLI-only, by
         # decree) — so the lister that existed solely to make it discoverable

@@ -814,6 +814,7 @@
   "create_language": "Langue",
   "create_language_auto": "Détection automatique",
   "create_log": "Journal du serveur",
+  "create_shot_alt": "La page en cours de capture",
   "create_max_bytes": "Budget de taille",
   "create_max_depth": "Profondeur max.",
   "create_max_pages": "Pages max.",

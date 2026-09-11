@@ -814,6 +814,7 @@
   "create_language": "Sprache",
   "create_language_auto": "Automatisch erkennen",
   "create_log": "Serverprotokoll",
+  "create_shot_alt": "Die erfasste Seite",
   "create_max_bytes": "Größenbudget",
   "create_max_depth": "Max. Tiefe",
   "create_max_pages": "Max. Seiten",

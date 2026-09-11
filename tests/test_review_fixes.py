@@ -57,6 +57,11 @@ def test_the_live_picture_is_the_page_the_crawl_started_from():
     capture._started = True
     capture.last_shot = None
     capture.count = 0
+    # Built bare, so the progress sink a real capture always has is supplied
+    # here. It records the announcements, which is the second half of the rule:
+    # one picture, announced once.
+    announced = []
+    capture._note = announced.append
 
     for url in (
         "https://example.com/",
@@ -66,6 +71,12 @@ def test_the_live_picture_is_the_page_the_crawl_started_from():
         capture.fetch(url)
 
     assert capture.last_shot == b"seed-shot"
+    assert [e for e in announced if e.get("event") == "shot"] != [], (
+        "the page being captured is announced so the run screen can show it"
+    )
+    assert len([e for e in announced if e.get("event") == "shot"]) == 1, (
+        "announced once, for the seed — not once per page in the frontier"
+    )
 
 
 class _Archive:

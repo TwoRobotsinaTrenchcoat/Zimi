@@ -3078,6 +3078,22 @@
   background: var(--panel, rgba(255,255,255,0.04));
 }
 
+/* The live page, while its capture runs. A full-page screenshot of a homepage
+   is twenty thousand pixels tall, so this shows the TOP of it at the width it
+   has — enough to recognise the page, never enough to push the progress strip
+   off the screen. object-position keeps that crop at the top rather than the
+   middle, which is where the interesting part of a page is. */
+.create-live-shot {
+  margin: 0 0 14px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--panel, rgba(255,255,255,0.04));
+}
+.create-live-shot img {
+  display: block; width: 100%; height: 180px;
+  object-fit: cover; object-position: top center;
+}
+@media (max-width: 560px) { .create-live-shot img { height: 120px; } }
+
 
 /* The two pictures a capture keeps, side by side on anything wide enough and
    stacked on a phone. Neither means much alone: the pair is the comparison. */

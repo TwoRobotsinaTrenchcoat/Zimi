@@ -46,6 +46,11 @@ var CREATE_LOG_MAX = 500;
 // What the server's probe stops counting at, so the preview can say "12+"
 // rather than claiming a playlist is exactly as long as the sample.
 var CREATE_PROBE_CAP = 12;
+// How long the address field waits after the last keystroke before asking the
+// server what is there. Long enough that typing an address is not a probe per
+// character, short enough that someone who pastes and reaches for Create has
+// already been answered.
+var CREATE_PROBE_DEBOUNCE_MS = 600;
 // Rows the tree will draw. A site crawl may legitimately reach five thousand
 // pages; five thousand DOM subtrees on a phone is a frozen tab. Past this the
 // pages keep being counted and the surplus collapses into one summary row, so
@@ -1779,17 +1784,38 @@ function _createWireAddress() {
     var def = _createDef(_createSelected);
     if (e.key === 'Enter' && !(def && def.multiline)) { e.preventDefault(); _createSubmit(); }
   });
-  // 'change' rather than 'input': it fires when the value has settled and
-  // focus leaves, which is exactly when the question "what is there?" becomes
-  // answerable without probing every keystroke.
-  src.addEventListener('change', function() {
-    // Typing a new address over a finished run means "make THAT one" — the
-    // done card for the last capture must not sit there looking like the
-    // answer to it (Eric: typing apple.com after CNN "reloaded the completed
-    // page for the last one").
+  // Typing a new address over a finished run means "make THAT one" — the
+  // done card for the last capture must not sit there looking like the answer
+  // to it (Eric: typing apple.com after CNN "reloaded the completed page for
+  // the last one").
+  function ask() {
     _createClearFinished();
     _createProbeSource();
+  }
+  // 'change' fires when the value has settled and focus leaves. That was the
+  // only trigger, and it made the probe depend on clicking somewhere else:
+  // paste an address, press Create, and the job started without the probe ever
+  // running — so the engine it would have chosen never got chosen (Eric: "I
+  // could've clicked create right away and missed that step"). Typing now asks
+  // too, after a pause, so the answer is usually there before the button is.
+  src.addEventListener('input', function() {
+    clearTimeout(_createProbeTimer);
+    _createProbeTimer = setTimeout(ask, CREATE_PROBE_DEBOUNCE_MS);
   });
+  src.addEventListener('change', function() {
+    clearTimeout(_createProbeTimer);
+    ask();
+  });
+}
+var _createProbeTimer = null;
+
+// Whether the address on screen has been answered by the probe. The engine and
+// the mode are chosen from that answer, so starting a job without it is
+// starting a different job from the one the page was about to describe.
+function _createSourceIsProbed() {
+  var body = _createBuildRequest(_createSelected, _createFormFields());
+  if (!body) return true;  // nothing to probe
+  return !_createProbing && body.source === _createPreviewSource;
 }
 
 // The address field dressed for the mode that is lit: its label, its
@@ -2117,6 +2143,17 @@ async function _createSubmit() {
   if (_createSubmitting) return;
   var body = _createBuildRequest(_createSelected, _createFormFields());
   if (!body) { _createFormError(t('create_needs_source')); return; }
+  // The probe is not decoration: it picks the engine and can move the mode —
+  // a video address typed under Web page is a video. Pressing Create before it
+  // has answered started a job with whatever the form happened to hold. So
+  // wait for it, then read the form again, because answering it may have
+  // changed both.
+  if (!_createSourceIsProbed()) {
+    clearTimeout(_createProbeTimer);
+    await _createProbeSource();
+    body = _createBuildRequest(_createSelected, _createFormFields());
+    if (!body) { _createFormError(t('create_needs_source')); return; }
+  }
   _createFormError('');
   _createStashMode();
   // Whatever finished before is not this. Cleared BEFORE the request goes out,
@@ -2586,6 +2623,14 @@ function _createRunShellHtml(s) {
         '<div class="create-caption" id="create-run-sub"></div>' +
       '</div>' +
     '</div>' +
+    // The picture of the live page, the moment the engine has one. It is
+    // taken seconds in and used to be visible only after the ZIM existed, so
+    // the longest part of a capture showed nothing of what was being captured
+    // (Eric: "if we're taking a screenshot of source why not splash that up at
+    // the top while creating"). Empty until the job says it has one.
+    '<div class="create-live-shot" id="create-live-shot" hidden>' +
+      '<img id="create-live-shot-img" alt="">' +
+    '</div>' +
     _createPhaseStripHtml() +
     '<div class="create-phase-detail" id="create-phase-detail" aria-live="polite"></div>' +
     '<div class="create-metrics" id="create-metrics"></div>' +
@@ -2660,6 +2705,27 @@ function _createSyncHead(s) {
   _createSetLine(sub, title ? mode + ' · ' + _createShortSource(source) : mode,
     title ? source : '');
   _createSetHeadIcon();
+  _createSetShot(s);
+}
+
+// The picture of the live page while the job runs. Fetched once per job, by a
+// URL carrying the job id so a new run never shows the last one's page and the
+// browser can cache each hard.
+function _createSetShot(s) {
+  var wrap = document.getElementById('create-live-shot');
+  var img = document.getElementById('create-live-shot-img');
+  if (!wrap || !img) return;
+  if (!s || !s.has_shot || !s.id) {
+    wrap.hidden = true;
+    img.removeAttribute('src');
+    return;
+  }
+  var want = '/manage/create/shot?job=' + encodeURIComponent(s.id);
+  if (img.getAttribute('src') !== want) {
+    img.setAttribute('src', want);
+    img.alt = _createT('create_shot_alt');
+  }
+  wrap.hidden = false;
 }
 
 // The icon the probe found for whatever is being captured. Kept in a module
@@ -3075,6 +3141,7 @@ function _createReportLinkHtml(s, what) {
 function _createSyncOutcome(s) {
   if (!s.done || _createDoneMounted) return;
   _createDoneMounted = true;
+  _createFreshenForm(s);
   if (s.ok && s.result && s.result.name) { _createMountDone(s); return; }
   var fail = document.getElementById('create-fail-slot');
   if (!fail) return;
@@ -3162,6 +3229,41 @@ function _createInsideHtml(shape) {
 }
 
 // nothing else: there is no streak, no score and nothing to come back for.
+// A finished run leaves the form ready for the next one, not holding the last
+// one's answer. The done card IS the result; the address, the title and the
+// preview under it are the question, and they were being kept — so the next
+// creation started pre-filled with the previous one's everything (Eric: "after
+// a run is done it should be cleared/fresh for the next creation").
+//
+// Only when the form still holds the job that just finished. Someone who
+// started typing the next address while the last one ran has said what they
+// want, and a completion event arriving mid-word must not take it away.
+function _createFreshenForm(s) {
+  var src = document.getElementById('create-source');
+  var typed = src ? String(src.value || '').trim() : '';
+  var ran = String((s && s.source) || '').trim();
+  if (!ran || (typed && typed !== ran)) return;
+  clearTimeout(_createProbeTimer);
+  if (src) src.value = '';
+  var title = document.getElementById('create-title');
+  if (title) title.value = '';
+  _createPreview = null;
+  _createPreviewSource = '';
+  _createHeadIcon = null;
+  // Each mode stashes its own title and preview, so clearing only what is
+  // mounted would bring the last run's answer straight back on a chip switch.
+  for (var id in _createModeState) {
+    if (!Object.prototype.hasOwnProperty.call(_createModeState, id)) continue;
+    _createModeState[id].preview = null;
+    _createModeState[id].previewSource = '';
+    _createModeState[id].title = '';
+  }
+  // The engine may have been auto-picked for the address that just finished;
+  // the next address gets to pick its own.
+  _createEngineTouched = false;
+  _renderCreatePreview();
+}
+
 function _createMountDone(s) {
   var host = document.getElementById('create-done-slot');
   if (!host) return;

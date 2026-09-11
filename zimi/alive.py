@@ -72,7 +72,7 @@ from zimi.creator import (
 )
 from zimi import zimpatch
 from zimi.warc import WarcWriter
-from zimi.zimwriter import _slug, scraper_string, shot_verdict
+from zimi.zimwriter import _slug, announce_shot, scraper_string, shot_verdict
 
 log = logging.getLogger("zimi.alive")
 
@@ -290,6 +290,7 @@ class AliveCapture:
         # warn about a collapse that never happened.
         if self.last_shot is None:
             self.last_shot = getattr(page, "shot", None)
+            announce_shot(self._note, self.last_shot)
         # Nothing was spooled — the recorder path collects no resources — but
         # discarding is what makes that a fact rather than an assumption.
         page.discard()
