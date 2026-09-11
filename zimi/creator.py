@@ -246,23 +246,24 @@ FACES_METADATA_KEY = "X-Zimi-Faces"
 def _store_other_face(creator, static_cls, capture, title, final_url, note):
     """Keep the site's other face when it has one, as a second entry.
 
-    A site with a dark mode written as a media query serves a different page
-    depending on the reader's theme, and a capture could only ever keep one of
-    them: someone reading in dark opened a captured site and got the light one,
-    which is not what the site does. Both are kept now, and the reader shows
-    whichever matches the theme in front of the person.
+    A site with a dark mode serves a different page depending on the reader's
+    theme, and a capture could only ever keep one of them: someone reading in
+    dark opened a captured site and got the light one, which is not what the
+    site does. Both are kept now, and the reader shows whichever matches the
+    theme in front of the person.
 
     The alternate is an ordinary entry beside the main one, so any other viewer
-    can still open it, and a metadata key says which is which. Assets are
-    shared: the second face is the same page repainted, so its images and fonts
-    were already carried by the first.
+    can still open it, and a metadata key says which is which. Most of its
+    assets are shared — it is the same page repainted — and the few it does not
+    share, like a hero swapped for a different file, were carried on its own
+    visit.
 
     Returns the metadata value written, or "" when the site has one face."""
     other = getattr(capture, "other_face", None)
     if not other:
         return ""
-    scheme, html = other
-    rendered = capture.render_other(html, final_url)
+    scheme, html, resources = other
+    rendered = capture.render_other(html, final_url, resources)
     if not rendered:
         return ""
     creator.add_item(
@@ -2001,7 +2002,7 @@ class BuiltinCapture:
     # No browser here, so no media query to flip and no second face to keep.
     other_face = None
 
-    def render_other(self, html, final_url):
+    def render_other(self, html, final_url, resources=None):
         return ""
 
     def render(self, target, html, final_url, resolve_link=None):

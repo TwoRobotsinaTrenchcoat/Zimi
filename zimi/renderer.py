@@ -168,6 +168,15 @@ SCROLL_QUIET_TIMEOUT = 8.0
 # serialize a page whose most memorable picture is a blank. Poll cheaply.
 IMAGE_SETTLE_TIMEOUT = 6.0
 IMAGE_SETTLE_TICK = 0.25
+
+# How long to let a replayed page finish booting, and how still it has to go
+# before we believe it. Hydration is CPU work: every script the ZIM holds is
+# served from memory in milliseconds, so "the network went quiet" can arrive
+# while the page is still an empty shell. Only the packaged shot of a live
+# capture waits this out — a frozen capture has no scripts left to run.
+BOOT_SETTLE_TIMEOUT = 15.0
+BOOT_SETTLE_TICK = 0.4
+BOOT_SETTLE_STABLE = 3
 # Killing the child: how long a browser gets to exit politely before it is
 # taken out. A wedged renderer must never outlive the job that started it.
 KILL_GRACE = 3.0
@@ -219,6 +228,12 @@ BLOCK_ABORT_CODE = "blockedbyclient"
 # How long a repaint needs after the media query flips. A theme swap is CSS,
 # not a fetch, so this is a frame or two rather than a network wait.
 FACE_SETTLE = 0.35
+# A click on the page's own theme control, and the short quiet afterwards. The
+# switch may fetch a stylesheet or a sprite it had not needed until now, so a
+# repaint's worth of waiting is not always enough — but this is a theme swap,
+# not a navigation, so the bound stays small.
+FACE_CLICK_TIMEOUT = 5.0
+FACE_CLICK_QUIET = 4.0
 
 # What "this site paints differently" means, cheaply and without touching
 # anything: the colours of the document and of a sample of what is on it.
@@ -236,6 +251,51 @@ _FACE_COLOURS_JS = """() => {
   }
   return seen.join('|');
 }"""
+
+# Whether the document is painted dark, decided the way a person decides it:
+# by how bright the page is, not by what it was asked for. A site that ignores
+# prefers-color-scheme and keeps its own switch can hand back a face labelled
+# with the query we sent rather than the one we got, so both faces are
+# measured instead of assumed. Rec. 709 luma over the first opaque background
+# up the tree, because a transparent body composites onto the html element.
+_FACE_IS_DARK_JS = """() => {
+  const opaque = (c) => {
+    const m = /rgba?\\(([^)]+)\\)/.exec(c || '');
+    if (!m) return null;
+    const p = m[1].split(',').map(Number);
+    if (p.length > 3 && p[3] === 0) return null;
+    return p;
+  };
+  for (const el of [document.body, document.documentElement]) {
+    if (!el) continue;
+    const p = opaque(getComputedStyle(el).backgroundColor);
+    if (!p) continue;
+    return (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) < 128;
+  }
+  return false;
+}"""
+
+# A control on the page that switches the theme, as the page itself labels it.
+# Deliberately a small allowlist of self-descriptions rather than a guess at
+# what a button might do: this ends in a real click on somebody else's site,
+# so the only things clicked are the ones that say what they are. Ordered by
+# how explicit the claim is, and the first visible match wins.
+_THEME_CONTROL_SELECTORS = (
+    "[data-theme-toggle]",
+    "#theme-toggle",
+    "#theme-switch",
+    "button[aria-label*='dark mode' i]",
+    "button[aria-label*='light mode' i]",
+    "button[aria-label*='theme' i]",
+    "button[aria-label*='appearance' i]",
+    "button[title*='dark mode' i]",
+    "button[title*='light mode' i]",
+    "button[title*='theme' i]",
+    "a[aria-label*='theme' i]",
+    "button[class*='theme-toggle' i]",
+    "button[class*='theme-switch' i]",
+    "[role='switch'][aria-label*='theme' i]",
+)
 
 # The extra quiet time a recording pass allows after everything the snapshot
 # engine waits for. A frozen snapshot only needs the pixels; a recording needs
@@ -987,6 +1047,9 @@ class RenderedSession:
         # like the site they were reading (#65). None follows the browser
         # default, which is light.
         self._color_scheme = color_scheme
+        # The primary face's colours, set by _has_second_face and read by
+        # _other_face to tell "the site repainted" from "nothing happened".
+        self._face_fingerprint = None
         self._budget = budget
         self._note = note or (lambda _m: None)
         self._viewport = viewport
@@ -1367,17 +1430,22 @@ class RenderedSession:
                 raise CreateError(
                     f"cannot read {url} after rendering it: " f"{_playwright_reason(e)}"
                 )
-            # And then fetch it, on a page of its own. It cannot be taken from
-            # this one: _PREPARE_JS has stripped the scripts that would react
-            # to the theme, and it mutates what it serializes, so a second
-            # pass here would either see nothing change or corrupt the capture
-            # that matters. A whole extra visit, only for the sites that have
-            # two faces.
-            other = self._other_face(url) if two_faced else None
+            # This page's own bodies first. Chromium only holds them while the
+            # page is open, and the second face below opens a page of its own
+            # whose assets have to be collected the same way — so the primary's
+            # map is built here, and handed over as the set the second visit
+            # does not need to spool again.
             if recorded is None:
                 resources, doc_bytes = self._collect(responses, final_url)
             else:
                 resources, doc_bytes = {}, recorded
+            # And then fetch the other face, on a page of its own. It cannot be
+            # taken from this one: _PREPARE_JS has stripped the scripts that
+            # would react to the theme, and it mutates what it serializes, so a
+            # second pass here would either see nothing change or corrupt the
+            # capture that matters. A whole extra visit, only for the sites that
+            # have two faces.
+            other = self._other_face(url, known=set(resources)) if two_faced else None
         finally:
             try:
                 page.close()
@@ -1414,10 +1482,12 @@ class RenderedSession:
         want = "light" if (self._color_scheme or "light") == "dark" else "dark"
         try:
             before = page.evaluate(_FACE_COLOURS_JS)
+            self._face_fingerprint = before
             page.emulate_media(color_scheme=want)
             page.wait_for_timeout(int(FACE_SETTLE * 1000))
             after = page.evaluate(_FACE_COLOURS_JS)
-            return after != before
+            if after != before:
+                return True
         except Exception as e:
             log.debug("could not test for a second face: %s", e)
             return False
@@ -1426,13 +1496,55 @@ class RenderedSession:
                 page.emulate_media(color_scheme=self._color_scheme or "no-preference")
             except Exception:
                 pass
+        # The media query said no, which is not the same as "one face". A site
+        # can keep its themes entirely in its own hands — draculatheme.com
+        # stamps data-theme="dark" whatever the query says, and flips only when
+        # you press its moon. Those sites are exactly the ones a reader most
+        # expects to have two faces, so ask whether the page carries a control
+        # that says it switches the theme. Finding one is not clicking one;
+        # that happens on the separate visit, where a misfire costs a face
+        # rather than the capture.
+        return self._theme_control(page) is not None
 
-    def _other_face(self, url):
-        """``(scheme, html)`` for the face this capture is not taking, or None.
+    def _theme_control(self, page):
+        """The page's own theme switch, or None.
+
+        Matched on how the control describes ITSELF — an aria-label, a title,
+        a data attribute a framework set. Nothing is inferred from a moon glyph
+        or a class that merely contains "toggle": this ends in a real click on
+        someone else's site, so the bar is that the page said what the button
+        does."""
+        for selector in _THEME_CONTROL_SELECTORS:
+            try:
+                found = page.locator(selector).first
+                if found.count() and found.is_visible(timeout=1000):
+                    return found
+            except Exception:
+                continue
+        return None
+
+    def _face_scheme(self, page):
+        """``"dark"`` or ``"light"`` for what is painted, measured not assumed."""
+        try:
+            return "dark" if page.evaluate(_FACE_IS_DARK_JS) else "light"
+        except Exception as e:
+            log.debug("could not measure which face this is: %s", e)
+            return None
+
+    def _other_face(self, url, known=()):
+        """``(scheme, html, resources)`` for the face this capture is not
+        taking, or None.
 
         Its own visit, in the other colour scheme, because the face a site
         shows is decided by the page as it loads — by CSS, or by a script
         reading the preference — and both of those want a live page.
+
+        It collects its own subresources, minus ``known``. The comfortable
+        assumption is that a second face is the same page repainted and so
+        needs nothing new, and it is wrong often enough to matter:
+        draculatheme.com swaps its hero for a different FILE
+        (images/hero/default-light.svg), and a face whose picture was never
+        carried renders, offline, as a gap where the hero was.
 
         Never raises: a second face is a courtesy and a capture must not fail
         for one."""
@@ -1441,16 +1553,42 @@ class RenderedSession:
         try:
             page = self._context.new_page()
             page.emulate_media(color_scheme=want)
+            responses = []
+            page.on("response", lambda response: responses.append(response))
             page.goto(
                 url, wait_until="domcontentloaded", timeout=int(NAV_TIMEOUT * 1000)
             )
             self._quiet(page, QUIET_TIMEOUT)
+            # A site that honours the media query has already changed by now.
+            # One that does not needs its own switch pressed, and the press has
+            # to happen before the page is revealed and settled, so everything
+            # below measures the face we are actually keeping.
+            if page.evaluate(_FACE_COLOURS_JS) == self._face_fingerprint:
+                control = self._theme_control(page)
+                if control is None:
+                    return None
+                control.click(timeout=int(FACE_CLICK_TIMEOUT * 1000))
+                page.wait_for_timeout(int(FACE_SETTLE * 1000))
+                self._quiet(page, FACE_CLICK_QUIET)
+                if page.evaluate(_FACE_COLOURS_JS) == self._face_fingerprint:
+                    # It called itself a theme control and changed nothing.
+                    log.debug("the theme control on %s did not change it", url)
+                    return None
             self._reveal(page)
             self._quiet(page, SCROLL_QUIET_TIMEOUT)
             self._image_settle(page)
             self._settle_further(page)
+            # Measured, not assumed: a site we had to press the switch on never
+            # saw our media query, so the face we got is whatever it decided to
+            # paint. Falling back to `want` keeps the old behaviour for the
+            # sites that did answer the query.
+            scheme = self._face_scheme(page) or want
             html = page.evaluate(_PREPARE_JS)
-            return (want, html) if html else None
+            if not html:
+                return None
+            # Before the page closes: Chromium lets go of the bodies then.
+            extra, _ = self._collect(responses, url, skip=known)
+            return (scheme, html, extra)
         except Exception as e:
             log.debug("no second face for %s: %s", url, e)
             return None
@@ -1495,7 +1633,7 @@ class RenderedSession:
                 except Exception:
                     pass
 
-    def shoot_packaged(self, html, by_path, mainpath="A/index"):
+    def shoot_packaged(self, html, by_path, mainpath="A/index", settle=False):
         """A picture of the page AS THE ZIM WILL SERVE IT, before it exists.
 
         The obvious way to photograph a finished ZIM is to open the finished
@@ -1509,6 +1647,16 @@ class RenderedSession:
         laid out exactly like the real one. Relative references resolve the way
         they will resolve in the reader, because the shape they resolve against
         is the same shape.
+
+        ``settle`` says whether the packaged page still has work to do. A
+        frozen capture does not: its document IS the finished DOM, so there is
+        nothing to boot and nothing lazy left to reveal, and waiting would only
+        cost seconds. A live capture is the opposite — the ZIM holds the
+        server's original HTML and the whole bundle, so the page boots,
+        hydrates and reveals itself exactly as the live one did. Hydration is
+        CPU work, not network work, so "the network went quiet" arrives long
+        before the page is finished and a picture taken then catches a shell
+        with an empty middle.
 
         Nothing here can fail a capture: any trouble is a missing picture.
         """
@@ -1545,10 +1693,24 @@ class RenderedSession:
             page.route("**/*", _serve)
             page.goto(
                 origin + mainpath,
-                wait_until="load",
+                wait_until="domcontentloaded" if settle else "load",
                 timeout=int(NAV_TIMEOUT * 1000),
             )
+            if settle:
+                # The same chain shoot_live walks, with one deliberate
+                # omission: the behaviors catalogue. It clicks — "show more",
+                # "load next" — and a click on a replay reaches for a response
+                # the archive never recorded, or navigates off the page we came
+                # to photograph. The scroll is the part that reveals lazy
+                # images, and it only asks for what the page itself asks for,
+                # so it is safe against a recording.
+                self._quiet(page, QUIET_TIMEOUT)
+                self._settle_boot(page)
+                self._lazy_scroll(page)
+                self._quiet(page, SCROLL_QUIET_TIMEOUT)
             self._image_settle(page)
+            if settle:
+                self._settle_further(page)
             return _shoot(page, "the packaged ZIM")
         except Exception as e:
             log.debug("no packaged screenshot: %s", e)
@@ -1601,7 +1763,9 @@ class RenderedSession:
                         return None
                 return None
 
-        return self.shoot_packaged(html, _Entries(), mainpath=mainpath)
+        # Always settled: this path exists for the engines that hand a WARC to
+        # warc2zim, and what those ZIMs serve is a page that still runs.
+        return self.shoot_packaged(html, _Entries(), mainpath=mainpath, settle=True)
 
     def _quiet(self, page, timeout):
         """Wait for the network to go quiet, and stop waiting when it will not.
@@ -1782,6 +1946,35 @@ class RenderedSession:
                 _sleep(IMAGE_SETTLE_TICK)
         except Exception as e:  # a page that refuses the question is done asking
             log.debug("image settle poll failed: %s", e)
+
+    def _settle_boot(self, page):
+        """Wait, bounded, for a page that is still building itself to stop.
+
+        Network-quiet cannot answer this. The scripts a replay needs are all
+        inside the ZIM, so they arrive at memory speed and the network goes
+        quiet almost immediately — while the framework has not yet run a line
+        of render code. Measured on draculatheme.com replayed out of an alive
+        capture: quiet at 900px, finished at 19,851px.
+
+        So watch the page instead of the network, and stop when its height has
+        held still for a few consecutive ticks. A page that never settles loses
+        at the timeout with whatever it had, which is the same bargain every
+        other wait here makes."""
+        deadline = time.time() + BOOT_SETTLE_TIMEOUT
+        last, stable = None, 0
+        try:
+            while time.time() < deadline:
+                height = page.evaluate(
+                    "() => document.documentElement ? document.documentElement.scrollHeight : 0"
+                )
+                stable = stable + 1 if height == last else 0
+                last = height
+                if stable >= BOOT_SETTLE_STABLE:
+                    return
+                _sleep(BOOT_SETTLE_TICK)
+            log.debug("replayed page never stopped growing; taking it at %s", last)
+        except Exception as e:  # a page that refuses the question is done asking
+            log.debug("boot settle poll failed: %s", e)
 
     def _settle_further(self, page):
         """The recording pass's extra wait, and the honest edge of v1.
@@ -2134,7 +2327,7 @@ class RenderedSession:
             return 0
         return len(body)
 
-    def _collect(self, responses, final_url):
+    def _collect(self, responses, final_url, skip=()):
         """Every kept response body, spooled to disk as it is read.
 
         Bodies are read here rather than in the event handler because reading
@@ -2157,7 +2350,7 @@ class RenderedSession:
                 if _same_document(url, final_url):
                     doc_bytes = max(doc_bytes, _body_length(response))
                 continue
-            if kind not in KEPT_RESOURCE_TYPES or url in resources:
+            if kind not in KEPT_RESOURCE_TYPES or url in resources or url in skip:
                 continue
             mime = _mimetype_of(response, url)
             try:
@@ -3024,24 +3217,37 @@ class RenderedCapture:
                 self._session.release(page.discard())
         return out
 
-    def render_other(self, html, final_url):
+    def render_other(self, html, final_url, resources=None):
         """The other face, rewritten for the ZIM through the same carrier.
 
-        It is the same page repainted, so every image, stylesheet and font
-        it references was already carried by the first face. Reusing the
-        carrier is what keeps a second face nearly free: the references are
-        rewritten to entries that already exist, and nothing is fetched.
+        Reusing the carrier is what keeps a second face nearly free: almost
+        every reference is to an entry the first face already carried, so it
+        is rewritten and nothing is fetched. ``resources`` is the remainder —
+        what only the second face asked for, spooled during its own visit.
+        Without them a swapped-out hero stays an absolute remote URL in the
+        stored page, which offline is a blank where the picture was.
 
         Never raises: a second face is a courtesy, and a capture must not
         fail for one."""
         assets = self._last_assets
         if assets is None:
             return ""
+        extra = dict(resources or {})
         try:
+            assets._resources.update(extra)
             return render_rendered_page(assets, html, final_url=final_url)
         except Exception as e:
             log.debug("could not render the other face of %s: %s", final_url, e)
             return ""
+        finally:
+            self.mimetypes |= assets.mimetypes
+            # The second face's spool is not on the page that discard() cleans,
+            # so it is cleaned here — once its bytes are in the ZIM.
+            for resource in extra.values():
+                try:
+                    os.remove(resource.path)
+                except OSError:
+                    pass
 
     def shoot_packaged(self, html, mainpath="A/index"):
         """The picture of what the ZIM will serve, taken before it is written.

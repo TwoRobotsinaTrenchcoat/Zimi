@@ -24,11 +24,11 @@ Every fix here is verified the way the reporter would see it: reproduce the lite
 
 ### Capture fidelity
 
-- [ ] **draculatheme.com as `alive`: the pictures are gone.** Worse than the same site as `rendered`. The short-page warning fires.
-- [ ] **draculatheme.com as `alive`: the ZIM looks better than its own packaged screenshot.** The screenshot is being taken before the page has settled, so the warning it drives is wrong too.
-- [ ] **`rendered` captures store no second face.** The in-page theme toggle is present and does nothing, because only one face was recorded. Two-faces currently runs for some engines and not others.
-- [ ] **A capture defaults to dark when the system is light.** Backwards. The stored faces must be chosen by the viewer's scheme, not by whichever was recorded first.
-- [ ] **In light mode the dracula image does not appear at all.**
+- [x] **draculatheme.com as `alive`: the pictures are gone.** — *not true of the ZIM: opened in the reader it renders at 19,851px against the live 19,858px, with 473 images and none broken. What was wrong was the picture of it. Fixed.*
+- [x] **draculatheme.com as `alive`: the ZIM looks better than its own packaged screenshot.** — *fixed, two causes. The photograph was taken of the converter's output, before the loader shim went in, so it was a picture of the very defect we fixed for #64. And a replayed page boots on CPU, not network, so "the network went quiet" arrived while the page was still an empty shell. Now: shot during the rewrite, and settled first. Dims went from 1280x19858,1280x900 to 1280x19858,1280x19858; the warning no longer fires.*
+- [x] **`rendered` captures store no second face.** — *fixed. draculatheme.com stamps `data-theme="dark"` whatever `prefers-color-scheme` says, so the media-query probe was right that flipping the query changed nothing, and wrong that the site has one face. It now falls back to looking for a control the page itself labels as a theme switch, and the second visit presses it.*
+- [x] **A capture defaults to dark when the system is light.** — *the site's own default, not ours: draculatheme.com paints dark for everyone. With two faces stored the reader now opens the one matching the viewer — verified, dark opens `A/index` at rgb(14,13,17) and light opens `A/index~other` at rgb(233,231,226). A face is labelled by what it paints, measured, not by the query we sent.*
+- [x] **In light mode the dracula image does not appear at all.** — *fixed. The light face swaps the hero for a different file, `images/hero/default-light.svg`, and the code assumed a second face was the same page repainted and needed nothing new. The reference stayed an absolute remote URL — offline, a gap. The second visit now collects its own subresources, minus what the first face already carried.*
 - [ ] **Do the fixes hold across all three engines?** `alive`, `rendered`, and the plain JS path. Needs a matrix run, not an assumption.
 - [ ] **Outbound links in a capture do not say they leave the ZIM.** Eric: "I guess that's fine" — so this is a judgement call, not a defect.
 

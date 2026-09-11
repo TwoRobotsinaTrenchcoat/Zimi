@@ -240,3 +240,71 @@ def test_the_alive_engine_calls_the_patcher():
     source = inspect.getsource(alive)
     assert "zimpatch.patch(" in source
     assert source.count("finish_zim(") >= 3  # the definition and both engines
+
+
+def test_the_picture_is_taken_of_the_page_that_ships(captured_zim, record):
+    """The shot callback sees the rewritten document, not the source one.
+
+    warc2zim's HTML does not run. A module loader that identifies its chunks by
+    the src attribute the server sent finds nothing once that reference has been
+    made relative, which is what the loader shim undoes. Photographing the
+    converter's output therefore produced a picture of a page that never ships —
+    a shell with an empty middle — and then a "much shorter than the live one"
+    warning about a ZIM that renders perfectly once opened. So the picture is
+    taken during the rewrite, from the bytes going into the file.
+    """
+    seen = {}
+
+    def shoot(html, by_path, mainpath):
+        seen["html"] = html
+        seen["mainpath"] = mainpath
+        seen["asset"] = by_path.get(ASSET_PATH)
+        return b"\xff\xd8shot-of-the-real-thing"
+
+    assert zimpatch.patch(captured_zim, record, live_shot=b"\xff\xd8live", shoot=shoot)
+
+    after = libzim_reader.Archive(captured_zim)
+    stored = bytes(after.get_entry_by_path("example.com/guide").get_item().content)
+    assert seen["html"].encode("utf-8") == stored
+    assert seen["mainpath"] == "example.com/guide"
+    # Assets are carried across byte for byte, so the source archive answers
+    # for them and the browser can resolve the page's references.
+    assert seen["asset"] == ("image/png", b"\x89PNG-bytes")
+    assert bytes(after.get_metadata("X-Zimi-Screenshot-Zim")) == (
+        b"\xff\xd8shot-of-the-real-thing"
+    )
+
+
+def test_a_shot_that_fails_costs_the_picture_and_nothing_else(captured_zim, record):
+    def shoot(html, by_path, mainpath):
+        raise RuntimeError("no browser here")
+
+    assert zimpatch.patch(captured_zim, record, live_shot=b"\xff\xd8live", shoot=shoot)
+    after = libzim_reader.Archive(captured_zim)
+    assert bytes(after.get_metadata("X-Zimi-Screenshot")) == b"\xff\xd8live"
+    assert "X-Zimi-Screenshot-Zim" not in set(after.metadata_keys)
+    assert after.has_main_entry
+
+
+def test_the_two_pictures_sizes_are_recorded(captured_zim, record):
+    """The About panel compares the pair for every other engine; a ZIM warc2zim
+    wrote is not the exception."""
+    from zimi.zimwriter import SHOT_DIMS_METADATA_KEY
+
+    live = _jpeg(1280, 4000)
+    packaged = _jpeg(1280, 3990)
+    zimpatch.patch(captured_zim, record, live_shot=live, packaged_shot=packaged)
+    after = libzim_reader.Archive(captured_zim)
+    assert (
+        bytes(after.get_metadata(SHOT_DIMS_METADATA_KEY)).decode()
+        == "1280x4000,1280x3990"
+    )
+
+
+def _jpeg(width, height):
+    """The smallest thing jpeg_size will read a size out of: SOI then an SOF0
+    frame header carrying the dimensions, with a byte of scan data after it so
+    the reader's bounds check can reach the header at all."""
+    body = bytes([0x08]) + height.to_bytes(2, "big") + width.to_bytes(2, "big")
+    segment = (len(body) + 2).to_bytes(2, "big") + body
+    return b"\xff\xd8" + b"\xff\xc0" + segment + b"\x00"

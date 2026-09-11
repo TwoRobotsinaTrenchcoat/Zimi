@@ -360,20 +360,32 @@ def finish_zim(out, *, seed_url, pages, assets, live_shot, note=None):
     Never raises. A capture that succeeded is not lost to an enrichment step:
     on any trouble the file stays exactly as the converter wrote it."""
     say = note or (lambda _m: None)
-    packaged = None
-    try:
-        from zimi.renderer import RenderedSession
-
-        with RenderedSession(note=lambda _m: None) as session:
-            packaged = session.shoot_zim_file(out)
-    except Exception as e:
-        log.debug("no packaged picture for %s: %s", out, e)
     record = zimpatch.build_record(
         seed_url=seed_url, engine=ENGINE_NAME, pages=pages, assets=assets
     )
-    patched = zimpatch.patch(
-        out, record, live_shot=live_shot, packaged_shot=packaged, note=say
-    )
+
+    # The picture is taken DURING the rewrite, from the document the rewrite is
+    # about to write. warc2zim's own HTML does not run — its script references
+    # are relative, and a module loader that identifies chunks by the src the
+    # server sent cannot find them — so photographing the converter's output
+    # produced a picture of an empty shell, and a "much shorter than the live
+    # one" warning about a ZIM that renders perfectly once opened.
+    taken = {}
+
+    def shoot(html, by_path, mainpath):
+        try:
+            from zimi.renderer import RenderedSession
+
+            with RenderedSession(note=lambda _m: None) as session:
+                taken["shot"] = session.shoot_packaged(
+                    html, by_path, mainpath=mainpath, settle=True
+                )
+        except Exception as e:
+            log.debug("no packaged picture for %s: %s", out, e)
+        return taken.get("shot")
+
+    patched = zimpatch.patch(out, record, live_shot=live_shot, shoot=shoot, note=say)
+    packaged = taken.get("shot")
     if patched and packaged and live_shot:
         _, short = shot_verdict(live_shot, packaged)
         if short:

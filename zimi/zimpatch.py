@@ -143,10 +143,25 @@ def patch(
     *,
     live_shot=None,
     packaged_shot=None,
+    shoot=None,
     publisher="Zimi",
     note=None,
 ):
     """Rewrite the ZIM at ``path`` in place, adding what Zimi knows.
+
+    ``shoot`` takes the picture of the packaged page, and is called with the
+    document this rewrite is about to write — not the one it read. That
+    distinction is the whole reason it is a callback. warc2zim's HTML does not
+    run: a module loader that identifies its chunks by the src attribute the
+    server sent finds nothing once the reference has been made relative, which
+    is the defect the loader shim below exists to undo. Photographing the file
+    before the shim went in produced a picture of a page that never ships —
+    an empty shell — and then a "the packaged page is much shorter than the
+    live one" warning about a ZIM that renders perfectly. Assets are carried
+    across untouched, so the source archive serves them.
+
+    ``packaged_shot`` is the already-taken picture, for callers that have one.
+    Passing both prefers ``shoot``.
 
     Returns True when the file was replaced. Never raises and never leaves a
     half-written file under the real name: the new ZIM is built beside it and
@@ -177,6 +192,7 @@ def patch(
             record=record,
             live_shot=live_shot,
             packaged_shot=packaged_shot,
+            shoot=shoot,
             publisher=publisher,
         )
         # Opened before it is trusted: a ZIM that cannot be read is not one we
@@ -201,7 +217,32 @@ def patch(
                 pass
 
 
-def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher):
+class _SourceEntries:
+    """``by_path`` over the archive being rewritten: the contract
+    ``RenderedSession.shoot_packaged`` asks for, one entry read at a time
+    rather than a dict of the whole file.
+
+    The three candidate paths are the same ones a reader tries. warc2zim keeps
+    a capture's own layout ("draculatheme.com/_next/..."), while a ZIM Zimi
+    wrote itself namespaces its entries, and this serves either."""
+
+    def __init__(self, archive):
+        self._archive = archive
+
+    def get(self, path):
+        for candidate in (path, "A/" + path, "-/" + path):
+            try:
+                item = self._archive.get_entry_by_path(candidate).get_item()
+            except Exception:
+                continue
+            try:
+                return item.mimetype, bytes(item.content)
+            except Exception:
+                return None
+        return None
+
+
+def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, shoot, publisher):
     from libzim.writer import Creator, Hint, Item, StringProvider
 
     class _Copied(Item):
@@ -233,6 +274,7 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
     metadata_keys = set(source.metadata_keys)
     language = _metadata_str(source, "Language") or "eng"
     main_path = source.main_entry.get_item().path
+    main_html = None
 
     with Creator(out).config_indexing(True, language) as creator:
         for index in range(source.all_entry_count):
@@ -260,6 +302,8 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
                     fixed = _with_loader_shim(text)
                     if fixed != text:
                         data = fixed.encode("utf-8")
+                    if path == main_path:
+                        main_html = fixed
                 except UnicodeDecodeError:
                     pass
             try:
@@ -277,6 +321,17 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
                 )
             except Exception as e:
                 log.debug("entry %s not carried: %s", path, e)
+
+        # The picture of the packaged page, taken from the document written
+        # just above rather than the one read out of the file. Assets are
+        # carried across byte for byte, so the source archive answers for them.
+        if shoot is not None and main_html is not None:
+            try:
+                taken = shoot(main_html, _SourceEntries(source), main_path)
+                if taken:
+                    packaged_shot = taken
+            except Exception as e:
+                log.debug("no packaged picture: %s", e)
 
         # Collected first, written once: a key may be both copied from the
         # source and set by us, and adding the same one twice refuses the
@@ -310,6 +365,16 @@ def _rewrite(source, out, *, pages, record, live_shot, packaged_shot, publisher)
             creator.add_metadata("X-Zimi-Screenshot", live_shot, "image/jpeg")
         if packaged_shot:
             creator.add_metadata("X-Zimi-Screenshot-Zim", packaged_shot, "image/jpeg")
+        if live_shot and packaged_shot:
+            # The pair of sizes, the same key the engines that write their own
+            # ZIM store. Without it the About panel can show a capture's two
+            # pictures but not say how they compare, which it does for every
+            # other engine.
+            from zimi.zimwriter import SHOT_DIMS_METADATA_KEY, shot_verdict
+
+            dims, _ = shot_verdict(live_shot, packaged_shot)
+            if dims:
+                creator.add_metadata(SHOT_DIMS_METADATA_KEY, dims)
         creator.set_mainpath(main_path)
 
 
