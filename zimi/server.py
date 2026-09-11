@@ -389,12 +389,32 @@ def _shape_backfill():
     from zimi import zimwriter as _zw
 
     time.sleep(_SHAPE_SETTLE_SECONDS)
+    _provenance_warm()
     while True:
         try:
             _shape_backfill_pass(_zw)
         except Exception:
             log.debug("ZIM shape backfill pass failed", exc_info=True)
         time.sleep(_SHAPE_RETRY_SECONDS)
+
+
+def _provenance_warm():
+    """Answer "which ZIMs did Zimi make" once, here, rather than under an admin.
+
+    kind_store makes the answer survive a restart, but SOMEBODY still has to
+    pay for the first walk, and left alone that somebody is whoever opens
+    Manage -> Creator first after a deploy — which is the wait this was meant
+    to remove. A library whose cache already holds the answer costs nothing
+    here, so this is a one-off on a new install and free afterwards.
+
+    Runs on the shape worker's thread, after its settle, so it adds no thread
+    and nothing on the serving path waits for it."""
+    try:
+        from zimi import http as _http
+
+        _http._zim_kinds()
+    except Exception:
+        log.debug("provenance warm failed", exc_info=True)
 
 
 def _shape_backfill_pass(_zw):
