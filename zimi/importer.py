@@ -48,6 +48,7 @@ import tempfile
 
 import zimi.server as _srv
 from zimi.creator import CreateError, _finish_output, _try_register
+from zimi import subproc
 from zimi.p2p import is_offline
 from zimi.zimwriter import _slug, scraper_string
 
@@ -102,7 +103,7 @@ def _run_stream(cmd, sink, heartbeat_s=HEARTBEAT_SECONDS):
     import threading
 
     try:
-        proc = subprocess.Popen(
+        proc = subproc.popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -136,9 +137,16 @@ def _run_stream(cmd, sink, heartbeat_s=HEARTBEAT_SECONDS):
         for line in proc.stdout or ():
             last[0] = time.monotonic()
             sink(line.rstrip("\n"))
+        return proc.wait()
     finally:
         done.set()
-    return proc.wait()
+        # In the finally, not after it. `sink` is the job's note(), which is
+        # the cancellation checkpoint and RAISES when a cancel is pending — the
+        # designed path, taken every time somebody stops a capture. The reap
+        # used to sit on the line below this block, so that path skipped both
+        # killing the converter and collecting it, and warc2zim's Chrome tree
+        # kept reading from disk for a capture already thrown away.
+        subproc.stop(proc)
 
 
 # ── sidecar venv management ─────────────────────────────────────────────────
