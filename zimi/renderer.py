@@ -486,6 +486,16 @@ def browser_available(refresh=False):
     return browser_status(refresh=refresh)[0]
 
 
+def browser_status_known():
+    """``(available, reason)`` if it has already been found out, else None.
+
+    For callers that must not block. Finding out costs a real browser launch —
+    2.5s on a NAS — and a pane that waits for it is a pane that takes 2.5s to
+    paint the first time somebody opens it after a restart."""
+    with _available_lock:
+        return _available
+
+
 def _probe_browser():
     """Actually launch one. Importing playwright proves nothing — the browser
     is a separate ~150MB download and its absence is the common case."""

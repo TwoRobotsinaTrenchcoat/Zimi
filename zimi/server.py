@@ -454,6 +454,47 @@ def _shape_store(measured):
         _save_disk_cache(disk)
 
 
+# Provenance survives a restart, because the walk that builds it does not.
+#
+# "Which ZIMs did Zimi make" is answered by opening each archive and reading
+# three metadata fields. The answer is memoized per process, so the walk is
+# free after the first one — and the first one is a read of every file in the
+# library, paid again on every restart. On a 73-ZIM NAS that is what made
+# Manage -> Creator's made-here list "super slow" every time (Eric,
+# 2026-09-11), because a deploy restarts the container.
+#
+# The answer is a property of the FILE, keyed by the same name-and-size
+# signature the memo uses, so it belongs in the cache beside every other fact
+# about that file. Same shape as _shape_store: the live list and the disk cache
+# together, or it is forgotten and recomputed forever.
+#
+# None is a real answer here and the common one — most ZIMs were published by
+# somebody else — so the record wraps it rather than storing it bare, and an
+# absent record means "not looked at yet" instead of "looked at, not ours".
+def kind_store(records):
+    """Remember ``{name: {"file": ..., "sig": ..., "kind": ...}}``. One write.
+
+    Keyed off the filename each record carries rather than looked up in the
+    live list: the walk that produces these runs before the list cache exists
+    in some callers, and a store that quietly wrote nothing would look exactly
+    like a store that worked."""
+    if not records:
+        return
+    for entry in _zim_list_cache or []:
+        record = records.get(entry.get("name"))
+        if record:
+            entry["zimi_kind"] = record
+    disk = _load_disk_cache() or {}
+    touched = False
+    for record in records.values():
+        cached = disk.get(record.get("file") or "")
+        if isinstance(cached, dict):
+            cached["zimi_kind"] = record
+            touched = True
+    if touched:
+        _save_disk_cache(disk)
+
+
 def _maintenance_pass():
     """One standing-maintenance sweep: renew the UPnP mapping (24h lease
     dies silently otherwise), refresh the offline catalog inside its TTL,
@@ -2744,6 +2785,11 @@ def load_cache(force=False):
             # a disk read on the path this cache exists to keep clear.
             if cached.get("faces"):
                 entry["faces"] = cached["faces"]
+            # Which ZIMs Zimi made, remembered rather than re-derived. See
+            # kind_store: without this the Creator pane reopens every archive
+            # in the library after each restart.
+            if cached.get("zimi_kind"):
+                entry["zimi_kind"] = cached["zimi_kind"]
             # Additive: real article count. Absent in caches built before this
             # field existed — the UI falls back to `entries` when it's missing.
             if cached.get("article_count") is not None:

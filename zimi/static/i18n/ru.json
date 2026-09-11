@@ -915,6 +915,7 @@
   "creator_engines": "Движки захвата",
   "creator_engines_hint": "Чем этот сервер может захватывать веб. Определяется тем, что установлено на машине, а не этой страницей.",
   "creator_installed": "Установлен",
+  "creator_checking": "Проверка…",
   "creator_made": "Создано здесь",
   "creator_made_empty": "Здесь пока ничего не создано.",
   "creator_not_installed": "Не установлен",

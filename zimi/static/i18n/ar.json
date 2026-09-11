@@ -915,6 +915,7 @@
   "creator_engines": "محرّكات الالتقاط",
   "creator_engines_hint": "ما الذي يستطيع هذا الخادم التقاط الويب به. يحدّده ما هو مثبَّت على الجهاز، لا هذه الصفحة.",
   "creator_installed": "مثبَّت",
+  "creator_checking": "جارٍ التحقق…",
   "creator_made": "أُنشئ هنا",
   "creator_made_empty": "لم يُنشأ شيء هنا بعد.",
   "creator_not_installed": "غير مثبَّت",

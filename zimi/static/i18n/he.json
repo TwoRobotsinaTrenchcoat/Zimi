@@ -915,6 +915,7 @@
   "creator_engines": "מנועי לכידה",
   "creator_engines_hint": "במה השרת הזה יכול ללכוד את הרשת. נקבע לפי מה שמותקן על המכונה, לא מהעמוד הזה.",
   "creator_installed": "מותקן",
+  "creator_checking": "בודק…",
   "creator_made": "נוצר כאן",
   "creator_made_empty": "עדיין לא נוצר כאן דבר.",
   "creator_not_installed": "לא מותקן",

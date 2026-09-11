@@ -915,6 +915,7 @@
   "creator_engines": "कैप्चर इंजन",
   "creator_engines_hint": "यह सर्वर वेब को किससे कैप्चर कर सकता है। यह मशीन पर क्या इंस्टॉल है उससे तय होता है, इस पृष्ठ से नहीं।",
   "creator_installed": "इंस्टॉल है",
+  "creator_checking": "जाँच हो रही है…",
   "creator_made": "यहाँ बनाया",
   "creator_made_empty": "यहाँ अभी तक कुछ नहीं बना।",
   "creator_not_installed": "इंस्टॉल नहीं है",

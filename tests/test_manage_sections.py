@@ -41,6 +41,37 @@ def own_data_dir(tmp_path, monkeypatch):
 # ── the creator section ─────────────────────────────────────────────────────
 
 
+def _settled_creator(tries=200):
+    """The Creator payload once its capability probe has landed.
+
+    The probe runs on a thread — finding out whether the rendered engine works
+    means launching a browser — so the first read answers `probing: True` with
+    the capability fields still None. Everything that does not need probing is
+    in that first answer; these are the ones that do."""
+    import time
+
+    for _ in range(tries):
+        body = _get("/manage/creator").body
+        if not body["probing"]:
+            return body
+        time.sleep(0.05)
+    raise AssertionError("the capability probe never landed")
+
+
+@pytest.fixture(autouse=True)
+def fresh_probe():
+    """Each test finds out for itself. The answer is process-wide and cached on
+    purpose, which between tests means one test's patched probes answering the
+    next one's assertions."""
+    manage._creator_probed = None
+    manage._creator_probed_at = 0.0
+    manage._creator_probing = False
+    yield
+    manage._creator_probed = None
+    manage._creator_probed_at = 0.0
+    manage._creator_probing = False
+
+
 def test_creator_payload_answers_every_question_the_section_asks(monkeypatch):
     """One read, and the section can draw itself. A missing key here is a row
     that renders as "loading" forever."""
@@ -48,17 +79,24 @@ def test_creator_payload_answers_every_question_the_section_asks(monkeypatch):
     monkeypatch.setattr(manage, "_create_alive_ready", lambda: False)
     monkeypatch.setattr(manage, "_create_root", lambda: "/srv/zims")
 
-    body = _get("/manage/creator").body
-    assert set(body) == {
+    first = _get("/manage/creator").body
+    assert set(first) == {
         "browser_ready",
         "alive_ready",
         "sidecar",
+        "probing",
         "create_root",
         "block_ads_default",
         "capture_variants_default",
         "queue",
         "offline",
     }
+    # What needs no probe is in the first answer, which is the whole point of
+    # not waiting for the ones that do.
+    assert first["create_root"] == "/srv/zims"
+    assert first["block_ads_default"] in (True, False)
+
+    body = _settled_creator()
     assert body["browser_ready"] is True
     assert body["alive_ready"] is False
     assert body["create_root"] == "/srv/zims"
@@ -307,10 +345,10 @@ def test_a_probe_that_explodes_costs_a_row_not_the_section(monkeypatch):
     monkeypatch.setattr(manage, "_create_browser_ready", lambda: True)
     monkeypatch.setattr(manage, "_create_alive_ready", lambda: False)
     monkeypatch.setitem(sys.modules, "zimi.importer", None)
-    h = _get("/manage/creator")
-    assert h.status == 200
-    assert h.body["sidecar"] == {"installed": False, "version": None}
-    assert h.body["browser_ready"] is True
+    assert _get("/manage/creator").status == 200
+    body = _settled_creator()
+    assert body["sidecar"] == {"installed": False, "version": None}
+    assert body["browser_ready"] is True
 
 
 # ── the auto-updater ────────────────────────────────────────────────────────

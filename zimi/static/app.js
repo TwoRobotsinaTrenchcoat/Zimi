@@ -9717,15 +9717,24 @@ function _saveUserAllowlist(name) {
 
 // A yes/no capability as a coloured word rather than a checkbox — nothing here
 // is settable from this pane, so a control would be a lie.
+// null means the server has not finished looking — finding out whether the
+// rendered engine works means launching a browser. "Not looked" is not "not
+// installed", and showing the second for the first tells an admin their
+// browser is missing when it is not.
 function _creatorStateHtml(ready, hint) {
+  if (ready === null || ready === undefined) {
+    return '<span class="app-update-quiet">' + tH('creator_checking') + '</span>';
+  }
   var cls = ready ? 'app-update-badge' : 'app-update-quiet';
   var text = tH(ready ? 'creator_installed' : 'creator_not_installed');
   return '<span class="' + cls + '"' + (hint ? ' title="' + escAttr(hint) + '"' : '') + '>' + text + '</span>';
 }
 
 // The one command that fixes a missing part. Shown under the row it belongs
-// to, and only when that part is actually missing.
+// to, and only when that part is actually missing — never while we are still
+// finding out, or the pane offers an install for something already installed.
 function _creatorInstallHtml(ready, cmd) {
+  if (ready === null || ready === undefined) return '';
   return ready ? '' : '<code class="app-update-cmd">' + esc(cmd) + '</code>';
 }
 
@@ -9756,6 +9765,16 @@ function _msCreatorHtml() {
 // The sidecar's value cell: version first, muted, then the verdict — so the
 // verdict word right-aligns flush with every other row's, instead of the
 // version breaking the status column (Eric: "The version isn't aligned").
+// The sidecar's row, from the whole payload rather than from the sidecar
+// object: null there means the server is still looking, and both the first
+// paint and the later patch have to say so the same way.
+function _creatorSidecarCell(d) {
+  return d.sidecar ? _creatorSidecarHtml(d.sidecar) : _creatorStateHtml(null);
+}
+function _creatorSidecarCmd(d) {
+  return _creatorInstallHtml(d.sidecar ? d.sidecar.installed : null, 'zimi import --setup');
+}
+
 function _creatorSidecarHtml(sidecar) {
   return (sidecar.version ? '<span class="app-update-quiet">' + esc(sidecar.version) + '</span> ' : '') +
     _creatorStateHtml(sidecar.installed);
@@ -9777,7 +9796,6 @@ function _creatorQueueHtml(queue) {
 }
 
 function _creatorHtml(d) {
-  var sidecar = d.sidecar || {};
   var sep = '<div style="border-top:1px solid var(--border);margin:16px 0 14px"></div>';
 
   // Defaults a new capture starts with — the control you actually touch.
@@ -9795,8 +9813,8 @@ function _creatorHtml(d) {
     '<div class="ms-hint" style="margin-bottom:10px">' + tH('creator_engines_hint') + '</div>' +
     _mcRow(tH('creator_browser'), '<span id="ms-cr-browser">' + _creatorStateHtml(d.browser_ready) + '</span>') +
     '<div id="ms-cr-browser-cmd">' + _creatorInstallHtml(d.browser_ready, "pip install 'zimi[browser]' && playwright install chromium") + '</div>' +
-    _mcRow(tH('creator_sidecar'), '<span id="ms-cr-sidecar">' + _creatorSidecarHtml(sidecar) + '</span>') +
-    '<div id="ms-cr-sidecar-cmd">' + _creatorInstallHtml(sidecar.installed, 'zimi import --setup') + '</div>' +
+    _mcRow(tH('creator_sidecar'), '<span id="ms-cr-sidecar">' + _creatorSidecarCell(d) + '</span>') +
+    '<div id="ms-cr-sidecar-cmd">' + _creatorSidecarCmd(d) + '</div>' +
     _mcRow(tH('creator_alive'), '<span id="ms-cr-alive">' + _creatorStateHtml(d.alive_ready) + '</span>');
 
   // Made here LAST — an unbounded, growing list, and the slow half to gather
@@ -9892,15 +9910,14 @@ function _creatorSortBy(key) {
 // Scoped background refresh: leaf nodes only, so a visible pane never rebuilds
 // under the reader (or under a finger halfway to a switch).
 function _patchCreatorSection(d) {
-  var sidecar = d.sidecar || {};
   var put = function(id, html) {
     var el = document.getElementById(id);
     if (el && el.innerHTML !== html) el.innerHTML = html;
   };
   put('ms-cr-browser', _creatorStateHtml(d.browser_ready));
   put('ms-cr-browser-cmd', _creatorInstallHtml(d.browser_ready, "pip install 'zimi[browser]' && playwright install chromium"));
-  put('ms-cr-sidecar', _creatorSidecarHtml(sidecar));
-  put('ms-cr-sidecar-cmd', _creatorInstallHtml(sidecar.installed, 'zimi import --setup'));
+  put('ms-cr-sidecar', _creatorSidecarCell(d));
+  put('ms-cr-sidecar-cmd', _creatorSidecarCmd(d));
   put('ms-cr-alive', _creatorStateHtml(d.alive_ready));
   put('ms-cr-queue', _creatorQueueHtml(d.queue));
   ['block_ads', 'capture_variants'].forEach(function(key) {
@@ -9908,6 +9925,12 @@ function _patchCreatorSection(d) {
     if (input) input.checked = !!d[key + '_default'];
   });
 }
+
+// How long to wait before asking again while the server is still probing what
+// this machine can capture with. A browser launch is the slow one, measured at
+// about 2.5s on a NAS.
+var CREATOR_PROBE_RETRY_MS = 1500;
+var _creatorProbeTimer = null;
 
 function _renderCreatorSection() {
   if (!document.getElementById('ms-creator')) return;
@@ -9917,8 +9940,17 @@ function _renderCreatorSection() {
     _creatorData = d;
     var slot = document.getElementById('ms-creator');
     if (!slot || _msSection !== 'creator') return;
-    if (first) { slot.innerHTML = _creatorHtml(d); return; }
-    if (changed) _patchCreatorSection(d);
+    if (first) slot.innerHTML = _creatorHtml(d);
+    else if (changed) _patchCreatorSection(d);
+    // The pane paints at once with what is known and fills the capability rows
+    // in when the server's probe lands, rather than holding the whole thing
+    // back for a browser launch.
+    clearTimeout(_creatorProbeTimer);
+    if (d.probing) {
+      _creatorProbeTimer = setTimeout(function() {
+        if (_msSection === 'creator') _renderCreatorSection();
+      }, CREATOR_PROBE_RETRY_MS);
+    }
   }).catch(function() {
     var slot = document.getElementById('ms-creator');
     // A cached paint stays up through a failed refresh — stale beats blank.

@@ -915,6 +915,7 @@
   "creator_engines": "Moteurs de capture",
   "creator_engines_hint": "Ce avec quoi ce serveur peut capturer le web. Déterminé par ce qui est installé sur la machine, pas depuis cette page.",
   "creator_installed": "Installé",
+  "creator_checking": "Vérification…",
   "creator_made": "Créé ici",
   "creator_made_empty": "Rien de créé ici pour l'instant.",
   "creator_not_installed": "Non installé",

@@ -3876,6 +3876,9 @@ def _creator_inventory():
                 "path_basename": entry.get("file", ""),
             }
         )
+    # What this walk learned, into the cache that survives a restart. Without
+    # it the walk above reopens every archive in the library after each one.
+    _http.flush_zim_kinds()
     return counts, rows
 
 
@@ -3888,9 +3891,94 @@ def _creator_payload():
     an admin looking for them should not have to open the create form and infer
     them from which options are greyed.
 
-    The two subprocess-backed probes are the reason this is its own endpoint
-    and not a field on the status poll: they are cheap but they are not free,
-    and the Manage view asks once when the section is opened."""
+    The probes are the reason this is its own endpoint and not a field on the
+    status poll. They are also the reason it never waits for them: finding out
+    whether the rendered engine works means LAUNCHING a browser, which is 2.5s
+    on a NAS, and the sidecar's version is a subprocess of its own. Answered
+    once per process, which sounds fine until you notice a deploy restarts the
+    process — so every deploy, the first admin to open Manage -> Creator sat
+    watching "Loading…" (Eric, 2026-09-11: "still super slow to load").
+
+    So the capabilities are probed on a thread and this returns what is known.
+    ``probing`` is True while the answer is still being found out, and the
+    three capability fields are None rather than False — "we have not looked"
+    is not "you cannot do this", and showing the second for the first is how a
+    pane tells an admin their browser is missing when it is not."""
+    known = _creator_capabilities()
+    return {
+        "browser_ready": known["browser_ready"] if known else None,
+        "alive_ready": known["alive_ready"] if known else None,
+        "sidecar": known["sidecar"] if known else None,
+        "probing": known is None,
+        # None, not "", when no root is configured — the same shape the create
+        # page's probe uses, so both readers treat "unset" the same way.
+        "create_root": _create_root() or None,
+        "block_ads_default": _create_default("block_ads", CREATE_BLOCK_ADS),
+        "capture_variants_default": _create_default(
+            "capture_variants", CREATE_CAPTURE_VARIANTS
+        ),
+        "queue": len(_create_queue_view()),
+        "offline": _is_offline_mode(),
+    }
+
+
+# The probed half of the Creator pane: found out on a thread, kept, refreshed
+# behind the answer already on screen.
+_creator_probe_lock = threading.Lock()
+_creator_probed = None  # the last finished dict, or None until the first lands
+_creator_probed_at = 0.0
+_creator_probing = False
+# How stale the last answer may be before a request quietly starts another.
+# These are installation facts, so they change about as often as somebody runs
+# an install command — and when they do, the pane is usually the thing they are
+# looking at, because it is where the command came from. Short enough to notice
+# that; long enough that clicking around Manage does not launch browsers.
+CREATOR_PROBE_TTL = 20.0
+
+
+def _creator_capabilities():
+    """What this machine can capture with, or None before the first answer.
+
+    Never blocks. Whatever was last found out is returned at once and a refresh
+    runs behind it when that answer has gone stale, so `zimi import --setup` in
+    another window still shows up in the pane that told the admin to run it —
+    which it did when every request probed, and which a probe-once cache would
+    have quietly taken away."""
+    global _creator_probing
+    with _creator_probe_lock:
+        answer = _creator_probed
+        fresh = (time.time() - _creator_probed_at) < CREATOR_PROBE_TTL
+        if _creator_probing or (answer is not None and fresh):
+            return answer
+        _creator_probing = True
+    threading.Thread(
+        target=_creator_probe_pass, daemon=True, name="creator-probe"
+    ).start()
+    return answer
+
+
+def _creator_probe_pass():
+    """One sweep of the capability probes, off the request thread."""
+    global _creator_probed, _creator_probed_at, _creator_probing
+    answer = None
+    try:
+        answer = {
+            "browser_ready": _create_browser_ready(),
+            "alive_ready": _create_alive_ready(),
+            "sidecar": _creator_sidecar(),
+        }
+    except Exception:
+        log.exception("creator capability probe failed")
+    with _creator_probe_lock:
+        # A failed sweep keeps the last good answer rather than blanking the
+        # pane; only the stamp moves, so the next request tries again.
+        if answer is not None:
+            _creator_probed = answer
+        _creator_probed_at = time.time()
+        _creator_probing = False
+
+
+def _creator_sidecar():
     sidecar = {"installed": False, "version": None}
     try:
         from zimi.importer import sidecar_status
@@ -3910,20 +3998,7 @@ def _creator_payload():
         }
     except Exception:
         log.exception("sidecar status probe failed")
-    return {
-        "browser_ready": _create_browser_ready(),
-        "alive_ready": _create_alive_ready(),
-        "sidecar": sidecar,
-        # None, not "", when no root is configured — the same shape the create
-        # page's probe uses, so both readers treat "unset" the same way.
-        "create_root": _create_root() or None,
-        "block_ads_default": _create_default("block_ads", CREATE_BLOCK_ADS),
-        "capture_variants_default": _create_default(
-            "capture_variants", CREATE_CAPTURE_VARIANTS
-        ),
-        "queue": len(_create_queue_view()),
-        "offline": _is_offline_mode(),
-    }
+    return sidecar
 
 
 def _creator_inventory_payload():

@@ -915,6 +915,7 @@
   "creator_engines": "Aufnahme-Engines",
   "creator_engines_hint": "Womit dieser Server das Web aufnehmen kann. Bestimmt durch das, was auf dem Rechner installiert ist, nicht über diese Seite.",
   "creator_installed": "Installiert",
+  "creator_checking": "Wird geprüft…",
   "creator_made": "Hier erstellt",
   "creator_made_empty": "Hier wurde noch nichts erstellt.",
   "creator_not_installed": "Nicht installiert",

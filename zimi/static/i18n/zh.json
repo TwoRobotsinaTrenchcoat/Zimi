@@ -915,6 +915,7 @@
   "creator_engines": "采集引擎",
   "creator_engines_hint": "本服务器可用来采集网页的方式。取决于机器上安装了什么，而非本页面的设置。",
   "creator_installed": "已安装",
+  "creator_checking": "正在检查…",
   "creator_made": "在此创建",
   "creator_made_empty": "此处尚未创建任何内容。",
   "creator_not_installed": "未安装",

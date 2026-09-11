@@ -286,13 +286,21 @@ class ZimInfoTests(unittest.TestCase):
 
     def test_provenance_is_read_once_per_file(self):
         """The kinds walk opens archives; on a 500 GB library it may do that
-        exactly once, not once per home render."""
+        exactly once, not once per home render — and, since the answer is
+        remembered on disk, not once per restart either."""
         reads = []
         real = zhttp._read_zim_metadata
 
         def counting(archive):
             reads.append(1)
             return real(archive)
+
+        # A genuinely cold start: no memo, and nothing remembered about these
+        # files from an earlier test in this process.
+        zhttp._zim_kind_memo.clear()
+        zhttp._zim_kind_pending.clear()
+        for entry in server.list_zims():
+            entry.pop("zimi_kind", None)
 
         zhttp._read_zim_metadata = counting
         try:
@@ -302,6 +310,16 @@ class ZimInfoTests(unittest.TestCase):
             self._get("/zim-info?kinds=1")
             self.assertEqual(len(reads), first, "provenance re-read a memoized file")
             self.assertEqual(first, 2, "expected one read per installed ZIM")
+
+            # And a restart. The memo is process memory; the record on each
+            # entry is what the disk cache hands back, and it is what stops the
+            # Creator pane reopening the whole library after every deploy.
+            zhttp._zim_kind_memo.clear()
+            reads.clear()
+            self._get("/zim-info?kinds=1")
+            self.assertEqual(
+                len(reads), 0, "a restart reopened every archive in the library"
+            )
         finally:
             zhttp._read_zim_metadata = real
 

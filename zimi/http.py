@@ -1023,20 +1023,57 @@ def _zim_metadata_for(name):
             return {}, False
 
 
+# Provenance answers found this pass that the disk cache has not got yet.
+# Written once, by the walk that fills it, rather than once per ZIM: a cold
+# library would otherwise rewrite the cache file seventy-three times.
+_zim_kind_pending = {}
+
+
 def _zim_kind_for(entry):
     """Memoized provenance facts for one list entry. Reads the archive at most
-    once per file identity per process."""
+    once per file identity per process, and — once the disk cache has it — at
+    most once per file identity ever."""
     name = entry.get("name")
     sig = _zim_file_sig(entry)
     with _zim_kind_lock:
         memo = _zim_kind_memo.get(name)
     if memo and memo[0] == sig:
         return memo[1]
+    # The cache outlives the process; the memo does not. `kind` is legitimately
+    # None for a ZIM somebody else published, which is most of them, so the
+    # record wraps it — an absent record means "never looked", not "not ours".
+    stored = entry.get("zimi_kind")
+    if isinstance(stored, dict) and stored.get("sig") == list(sig):
+        kind = stored.get("kind")
+        with _zim_kind_lock:
+            _zim_kind_memo[name] = (sig, kind)
+        return kind
     meta, readable = _zim_metadata_for(name)
     kind = _zimi_kind(meta) if readable else None
     with _zim_kind_lock:
         _zim_kind_memo[name] = (sig, kind)
+        _zim_kind_pending[name] = {
+            "file": entry.get("file", ""),
+            "sig": list(sig),
+            "kind": kind,
+        }
     return kind
+
+
+def flush_zim_kinds():
+    """Write what this pass learned into the cache that survives a restart.
+
+    Called by the walks, after they have walked. Never raises: provenance is a
+    badge and a breakdown, and neither is worth failing a page over."""
+    with _zim_kind_lock:
+        if not _zim_kind_pending:
+            return
+        records = dict(_zim_kind_pending)
+        _zim_kind_pending.clear()
+    try:
+        _srv.kind_store(records)
+    except Exception as e:
+        log.debug("could not remember provenance for %d ZIMs: %s", len(records), e)
 
 
 def _zim_kinds():
@@ -1050,6 +1087,7 @@ def _zim_kinds():
         kind = _zim_kind_for(entry)
         if kind:
             kinds[entry["name"]] = kind
+    flush_zim_kinds()
     elapsed = time.time() - t0
     # Only the cold pass costs anything (every later one is memoized), and on a
     # large library that pass is worth a line in the log.
