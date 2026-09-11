@@ -3071,7 +3071,9 @@ function renderHome(filter) {
   if (!homeScope) {
     const favNames = (collectionsCache && collectionsCache.favorites) || [];
     if (!filter && favNames.length > 0) {
-      const favZims = favNames.map(n => _zimInfo(n)).filter(Boolean);
+      // The star order is the order they were starred in; the library's own
+      // order is what the person chose, so it wins here too.
+      const favZims = _sortLibrary(favNames.map(n => _zimInfo(n)).filter(Boolean));
       if (favZims.length > 0) {
         const favZimNames = favZims.map(z => z.name);
         h += '<div class="cat-heading clickable" onclick="enterScope(\'favorites\',\'\u2605 ' + escJs(t('favorites')) + '\',' + escJs(JSON.stringify(favZimNames)) + ',true)">\u2605 ' + tH('favorites') + '</div>';
@@ -3120,7 +3122,7 @@ function renderHome(filter) {
     var _sections = [];
     if (!filter && collectionsCache && collectionsCache.collections) {
       for (const [cname, coll] of Object.entries(collectionsCache.collections)) {
-        const collZims = (coll.zims || []).map(n => _zimInfo(n)).filter(Boolean);
+        const collZims = _sortLibrary((coll.zims || []).map(n => _zimInfo(n)).filter(Boolean));
         if (collZims.length > 0) {
           const collZimNames = collZims.map(z => z.name);
           _sections.push({ key: 'col:' + cname, html:
