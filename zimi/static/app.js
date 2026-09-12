@@ -3836,6 +3836,25 @@ function _openZimAbout(zim) {
     .catch(function () { write('<div class="zi-none">' + tH('zi_load_failed') + '</div>'); });
 }
 
+// The date a card is currently ordered by, when it is ordered by a date.
+//
+// Deliberately not always: the card already says what it is, how much of it
+// there is and how big it is, and a fourth fact on every card answers a
+// question nobody asked. But the moment someone picks "Recently added", that
+// date IS what they are reading the list by — and an order you cannot see the
+// key of is an order you have to take on trust. So it appears because it was
+// asked for, and leaves when it stops being the question.
+function _sortedByDateHtml(z) {
+  var by = _librarySort();
+  var ts = by === 'added' ? z.first_seen : by === 'updated' ? z.updated_at : null;
+  if (!ts) return '';
+  var rel = _relTime(ts);
+  if (!rel) return '';
+  return ' &middot; <span class="card-when" title="' +
+    escAttr(new Date(ts * 1000).toLocaleString(_currentLang || 'en')) + '">' +
+    esc(rel) + '</span>';
+}
+
 function renderCardGrid(items, showStars, showCategory) {
   if (!items || !items.length) return '';
   const favs = (collectionsCache && collectionsCache.favorites) || [];
@@ -3884,6 +3903,7 @@ function renderCardGrid(items, showStars, showCategory) {
         '<div class="detail">' + catPrefix + _zimCountHtml(z) +
         ' &middot; ' + fmtSize(z.size_gb) +
         (_isZimiExport(z) && z.date ? ' &middot; ' + esc(z.date) : '') +
+        _sortedByDateHtml(z) +
         '</div>' +
       '</div></' + cardTag + '>';
   }).join('') + '</div>';

@@ -76,5 +76,48 @@ const before = JSON.stringify(lib);
 vm.runInContext('_sortLibrary(lib)', sandbox);
 check(JSON.stringify(lib) === before, 'sorting never mutates the caller\'s list');
 
+// ── the date you are sorting by is on the card ──────────────────────────────
+//
+// Eric, 2026-09-11: "when i sort by recently something maybe we should add the
+// date since that's now relevant? Or always have in full view?"
+//
+// Only when it IS the sort key. The card already carries what it is, how much
+// of it there is and how big it is; a fourth standing fact answers a question
+// nobody asked. But an order whose key you cannot see is an order you have to
+// take on trust, so the date appears the moment it becomes the question — and
+// leaves when it stops being one.
+Object.assign(sandbox, {
+  Date, Intl,
+  _currentLang: 'en',
+  esc: (v) => String(v),
+  escAttr: (v) => String(v),
+});
+vm.runInContext(grab('_relTime'), sandbox);
+vm.runInContext(grab('_sortedByDateHtml'), sandbox);
+
+const NOW = Math.floor(Date.now() / 1000);
+sandbox.dated = { name: 'atlas', first_seen: NOW - 3600, updated_at: NOW - 86400 * 3 };
+const shown = (mode) => {
+  vm.runInContext("_setLibrarySort('" + mode + "')", sandbox);
+  return vm.runInContext('_sortedByDateHtml(dated)', sandbox);
+};
+
+check(shown('alpha') === '', 'alphabetical shows no date — it is not a date order');
+check(shown('entries') === '', 'article count shows no date either');
+
+const added = shown('added');
+check(added.includes('card-when') && /hour/i.test(added),
+      'recently added shows the date it was added: ' + added.slice(0, 60));
+const updated = shown('updated');
+check(/day/i.test(updated),
+      'recently updated shows the date it was updated: ' + updated.slice(0, 60));
+
+// Every library has some ZIM with no stamp. It must render nothing rather than
+// "Invalid Date" or a dangling separator.
+vm.runInContext("_setLibrarySort('added')", sandbox);
+sandbox.undatedZim = { name: 'old' };
+check(vm.runInContext('_sortedByDateHtml(undatedZim)', sandbox) === '',
+      'an undated ZIM shows nothing rather than a broken date');
+
 if (failures) { console.error(failures + ' failure(s)'); process.exit(1); }
 console.log('all library sort checks passed');

@@ -885,6 +885,35 @@ def _zim_list_entry(name):
     return None
 
 
+def _random_pick_verdict(
+    result, preview, *, is_gutenberg, is_wiktionary, is_wikiquote, require_thumb
+):
+    """Whether a random pick is the one to serve.
+
+    ``"accept"`` means stop looking. ``"fallback"`` means it will do if nothing
+    better turns up, which is what makes the dice always land on something.
+
+    Its own function because the judging happens OUTSIDE the libzim lock while
+    the reading happens inside it, and because each source wants a different
+    thing: a Gutenberg cover page rather than chapter nine, a Wiktionary entry
+    that is English and not a bare inflection, a Wikiquote page that actually
+    carries a quote, and for the Discover strip, anything with a picture."""
+    # A Gutenberg pick that is not the cover is only ever a fallback. One that
+    # IS the cover still has to satisfy whatever else was asked for, so it
+    # falls through rather than being accepted here.
+    if is_gutenberg and "_cover" not in (result.get("path") or ""):
+        return "fallback"
+    if is_wiktionary and preview:
+        boring = preview.get("non_english") or preview.get("boring")
+        return "fallback" if boring else "accept"
+    if is_wikiquote and preview:
+        blurb = preview.get("blurb") or ""
+        return "accept" if (blurb and blurb[0] in ("\u201c", '"')) else "fallback"
+    if not require_thumb or (preview and preview["thumbnail"]):
+        return "accept"
+    return "fallback"
+
+
 def _zim_file_sig(entry):
     """The file identity a memoized provenance record is valid for."""
     return (entry or {}).get("file", ""), (entry or {}).get("size_bytes", 0)
@@ -2212,7 +2241,8 @@ class ZimHandler(BaseHTTPRequestHandler):
                 date_param = param("date")  # MMDD format
                 seed_param = param("seed")  # For deterministic daily picks
                 t0 = time.time()
-                candidates = []
+                best_result = None
+                best_preview = None
                 archive = None
                 pick_name = pick_names[0]
                 is_wiktionary = is_gutenberg = is_wikiquote = False
@@ -2247,10 +2277,25 @@ class ZimHandler(BaseHTTPRequestHandler):
                             16,
                         )
                         rng = _random.Random(seed_val)
-                    # Batch all ZIM reads under a single lock acquisition
-                    candidates = []
-                    with _srv._zim_lock:
-                        for _try in range(max_tries):
+                    # ONE attempt per lock acquisition, and stop as soon as a
+                    # pick is good enough.
+                    #
+                    # This used to hold _zim_lock across the whole loop and run
+                    # every attempt regardless — so a Wiktionary card read 50
+                    # random articles, extracted 50 previews, and held the
+                    # global libzim lock for all of it, even when the first pick
+                    # was perfect. The lock is the one every search and every
+                    # article read needs, and Discover fires one of these per
+                    # card in parallel, which is why the whole site stopped
+                    # while the strip filled in (Eric, 2026-09-11: "the whole
+                    # site is held up while it's loading the discover stuff").
+                    #
+                    # libzim needs the lock around each READ, not across a
+                    # sequence of them; holding it for the sequence was a
+                    # throughput trade that cost fairness. Judging each pick as
+                    # it arrives also means the usual case reads once.
+                    for _try in range(max_tries):
+                        with _srv._zim_lock:
                             result = None
                             if date_param and len(date_param) == 4 and _try == 0:
                                 result = _srv._get_dated_entry(
@@ -2258,64 +2303,32 @@ class ZimHandler(BaseHTTPRequestHandler):
                                 )
                             if not result:
                                 result = _srv.random_entry(archive, rng=rng)
-                            if not result:
-                                continue
                             preview = None
-                            if want_thumb:
+                            if result and want_thumb:
                                 preview = _srv._extract_preview(
                                     archive, pick_name, result["path"]
                                 )
-                            candidates.append((result, preview))
-                    if candidates:
-                        break
-                # Filter candidates outside the lock
-                best_result = None
-                best_preview = None
-                for result, preview in candidates:
-                    # Gutenberg: prefer cover pages
-                    if is_gutenberg and "_cover" not in result.get("path", ""):
-                        if best_result is None:
-                            best_result = result
-                            best_preview = preview
-                        continue
-                    # Skip non-English or boring wiktionary entries
-                    if (
-                        is_wiktionary
-                        and preview
-                        and (preview.get("non_english") or preview.get("boring"))
-                    ):
-                        if best_result is None:
-                            best_result = result
-                            best_preview = preview
-                        continue
-                    # Wiktionary: accept interesting English entry
-                    if (
-                        is_wiktionary
-                        and preview
-                        and not preview.get("non_english")
-                        and not preview.get("boring")
-                    ):
-                        best_result = result
-                        best_preview = preview
-                        break
-                    # Wikiquote: require an actual quote
-                    if is_wikiquote and preview:
-                        blurb = preview.get("blurb") or ""
-                        if blurb and blurb[0] in ("\u201c", '"'):
+                        if not result:
+                            continue
+                        if (
+                            _random_pick_verdict(
+                                result,
+                                preview,
+                                is_gutenberg=is_gutenberg,
+                                is_wiktionary=is_wiktionary,
+                                is_wikiquote=is_wikiquote,
+                                require_thumb=require_thumb,
+                            )
+                            == "accept"
+                        ):
                             best_result = result
                             best_preview = preview
                             break
                         if best_result is None:
                             best_result = result
                             best_preview = preview
-                        continue
-                    if not require_thumb or (preview and preview["thumbnail"]):
-                        best_result = result
-                        best_preview = preview
+                    if best_result is not None:
                         break
-                    if best_result is None:
-                        best_result = result
-                        best_preview = preview
                 if not best_result:
                     return self._json(200, {"error": "no articles found"})
                 dt = time.time() - t0
