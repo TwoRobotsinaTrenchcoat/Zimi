@@ -2665,7 +2665,46 @@ class ZimHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._dispatch_error(e)
 
-    def _serve_zim_metadata_image(self, zim_name, archive, key):
+    # The three pictures a ZIM serves out of its metadata, and how long a
+    # browser may reuse one without asking again.
+    #
+    # These used to be `max-age=0, must-revalidate` with an ETag over the
+    # CONTENT, which is correct and ruinously expensive: every render of the
+    # library asked about every icon, and answering the ask meant opening the
+    # archive and hashing the illustration — under the global libzim lock, which
+    # is the same lock every search and every article read needs. Seventy-four
+    # sources on the home screen is seventy-four locked reads, on every sort,
+    # every view toggle, every time the page came back. Eric, 2026-09-11: "icons
+    # disappear and redownload when i toggle compact or full", and "the whole
+    # site is held up".
+    #
+    # So the tag is the FILE's identity rather than a digest of its bytes —
+    # replacing a ZIM or re-capturing over the same name changes the mtime and
+    # almost always the size — and it is computed from the list cache, so a
+    # revalidation is answered before the lock is taken. The short freshness
+    # window means a re-render does not ask at all. It is the reason this is
+    # not `immutable`: a ZIM's bytes CAN change at the same URL, and a week of
+    # the wrong picture is what the previous version of this cost.
+    PICTURE_PATHS = ("-/icon", "-/shot-live", "-/shot-zim")
+    PICTURE_MAX_AGE = 30
+
+    def _picture_etag(self, zim_name, entry_path):
+        """The tag for a metadata picture, or "" when the file is unknown."""
+        sig = _srv.zim_signature(zim_name)
+        if not sig:
+            return ""
+        return '"%s-%s-%s"' % (entry_path.rsplit("/", 1)[-1], int(sig[0]), sig[1])
+
+    def _picture_not_modified(self, etag):
+        self.send_response(304)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", self._picture_cache_control())
+        self.end_headers()
+
+    def _picture_cache_control(self):
+        return "public, max-age=%d, must-revalidate" % self.PICTURE_MAX_AGE
+
+    def _serve_zim_metadata_image(self, zim_name, archive, key, entry_path):
         """Serve a JPEG held under a metadata key.
 
         The same contract the illustration gets, and for the same reason: the
@@ -2688,18 +2727,16 @@ class ZimHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        etag = '"shot-%s"' % hashlib.sha256(data).hexdigest()[:16]
+        etag = self._picture_etag(zim_name, entry_path) or (
+            '"shot-%s"' % hashlib.sha256(data).hexdigest()[:16]
+        )
         if self.headers.get("If-None-Match") == etag:
-            self.send_response(304)
-            self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
-            self.end_headers()
-            return
+            return self._picture_not_modified(etag)
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("ETag", etag)
-        self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        self.send_header("Cache-Control", self._picture_cache_control())
         self.end_headers()
         self.wfile.write(data)
 
@@ -2744,20 +2781,14 @@ class ZimHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        etag = '"icon-%s"' % hashlib.sha256(icon_data).hexdigest()[:16]
+        etag = self._picture_etag(zim_name, "-/icon") or (
+            '"icon-%s"' % hashlib.sha256(icon_data).hexdigest()[:16]
+        )
         if self.headers.get("If-None-Match") == etag:
-            self.send_response(304)
-            self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
-            self.end_headers()
-            return
+            return self._picture_not_modified(etag)
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
-        # max-age=0 + must-revalidate: reuse the cached bytes, but ask first.
-        # The ask is an ETag comparison the server answers with a 304, which is
-        # what makes this correct AND cheap — a page full of source tiles costs
-        # a handful of empty replies rather than a handful of images.
-        self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        self.send_header("Cache-Control", self._picture_cache_control())
         self.send_header("ETag", etag)
         self.send_header("Content-Length", str(len(icon_data)))
         self.end_headers()
@@ -2888,6 +2919,15 @@ class ZimHandler(BaseHTTPRequestHandler):
         <html lang> from the ZIM's language metadata. Activated via the
         ?a11y=1 query parameter on /w/ URLs.
         """
+        # Before the lock: a picture whose file has not changed is answered
+        # from the browser's own copy, without opening the archive at all. This
+        # is the difference between a library re-render costing one empty reply
+        # per source and costing one locked archive read per source.
+        if entry_path in self.PICTURE_PATHS:
+            etag = self._picture_etag(zim_name, entry_path)
+            if etag and self.headers.get("If-None-Match") == etag:
+                return self._picture_not_modified(etag)
+
         # Phase 1: Read from ZIM under lock
         with _srv._zim_lock:
             archive = _srv.get_archive(zim_name)
@@ -2915,7 +2955,9 @@ class ZimHandler(BaseHTTPRequestHandler):
                     if entry_path == "-/shot-live"
                     else _zw.SHOT_ZIM_METADATA_KEY
                 )
-                return self._serve_zim_metadata_image(zim_name, archive, key)
+                return self._serve_zim_metadata_image(
+                    zim_name, archive, key, entry_path
+                )
 
             try:
                 entry = archive.get_entry_by_path(entry_path)

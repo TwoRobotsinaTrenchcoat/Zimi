@@ -1959,7 +1959,7 @@ async function _initSecondary() {
   // manage button). Not while manage is open: on a slow library the gear can be
   // used long before this resolves, and painting home over it leaves the manage
   // chrome (X button, catalog placeholder) on top of the home view.
-  if (needsRerender && mode !== 'manage' && !readerOpen && !currentSource && !readerSource) renderHome();
+  if (needsRerender) _renderHomeSoon();
 }
 
 function route(push) {
@@ -3510,9 +3510,36 @@ function _refreshCreatedBuckets() {
   if (!moved) return;
   if (mode === 'manage') {
     if (manageTab === 'installed') renderInstalled();
-  } else if (!readerOpen && !currentSource && !readerSource) {
-    renderHome();
+  } else {
+    // Coalesced: the collections fetch is usually landing at the same moment
+    // and wants the same render.
+    _renderHomeSoon();
   }
+}
+
+// Home renders that follow LATE DATA, merged into one.
+//
+// Three separate things land in the first second of a cold load — the library
+// list, the collections, the provenance walk — and each one changes what home
+// shows, so each one used to re-render it. A render rebuilds every card's
+// innerHTML, which throws away every icon <img> and creates a new one, so a
+// boot asked the server for all 74 icons twice and the page visibly rebuilt
+// itself three times (Eric, 2026-09-11: "pulsing on the top a lot", "icons
+// disappear and redownload").
+//
+// The first render still happens at once — it is what the person is waiting
+// for. Only the follow-ups coalesce, into one render a beat later. The window
+// is long enough to catch two fetches finishing near each other and short
+// enough that nobody sees it wait.
+var HOME_RERENDER_COALESCE_MS = 60;
+var _homeRerenderTimer = null;
+function _renderHomeSoon() {
+  clearTimeout(_homeRerenderTimer);
+  _homeRerenderTimer = setTimeout(function() {
+    _homeRerenderTimer = null;
+    if (mode === 'manage' || readerOpen || currentSource || readerSource) return;
+    renderHome();
+  }, HOME_RERENDER_COALESCE_MS);
 }
 
 // No-op on a card that already carries its badge, so this is safe to call after

@@ -47,6 +47,7 @@ const pieces = [
   extract(/function _tzUtcOffsetMin\([\s\S]*?\n\}/, '_tzUtcOffsetMin'),
   extract(/function _almTzCardMatch\(targetTz, now\)\s*\{[\s\S]*?\n\}/, '_almTzCardMatch'),
   extract(/function _almTzCardLabel\(tz\)\s*\{[\s\S]*?\n\}/, '_almTzCardLabel'),
+  extract(/function _almTzInsertAt\(tz, now\)\s*\{[\s\S]*?\n\}/, '_almTzInsertAt'),
 ];
 
 const sandbox = { Intl, Date, Math, String, JSON, Object };
@@ -57,7 +58,8 @@ sandbox.__loc = { name: '', lat: 0, lon: 0, stored: false };
 vm.createContext(sandbox);
 vm.runInContext(pieces.join('\n'), sandbox);
 
-const { _almTzForLocation, _almTzCardMatch, _almTzCardLabel, _TZ_CITIES, _MAP_CITIES } = sandbox;
+const { _almTzForLocation, _almTzCardMatch, _almTzCardLabel, _almTzInsertAt,
+        _TZ_CITIES, _MAP_CITIES } = sandbox;
 
 let failed = 0;
 function check(name, cond, detail) {
@@ -142,6 +144,30 @@ check('an unnamed pick falls back to the zone\'s own city',
 check('and underscores in a zone name become spaces',
   _almTzCardLabel('Australia/Lord_Howe') === 'Lord Howe',
   'got ' + JSON.stringify(_almTzCardLabel('Australia/Lord_Howe')));
+
+// --- 7. an off-tour card lands where its clock belongs ---------------------
+// The row reads west to east. A card shoved to the front puts a +8:45 clock to
+// the left of Honolulu's -10, which makes the whole line unreadable.
+function offsetOf(tz, date) {
+  const opts = {year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'numeric',second:'numeric',hour12:false};
+  const fmt = (z) => new Intl.DateTimeFormat('en-US', Object.assign({timeZone:z}, opts)).format(date);
+  return Math.round((new Date(fmt(tz)) - new Date(fmt('UTC'))) / 60000);
+}
+for (const zone of ['Australia/Eucla', 'Pacific/Chatham', 'Pacific/Marquesas']) {
+  const at = _almTzInsertAt(zone, JAN);
+  const mine = offsetOf(zone, JAN);
+  const before = at > 0 ? offsetOf(_TZ_CITIES[at - 1].tz, JAN) : -Infinity;
+  const after = at < _TZ_CITIES.length ? offsetOf(_TZ_CITIES[at].tz, JAN) : Infinity;
+  check(zone + ' sits between the clocks either side of it',
+    before <= mine && mine < after,
+    'inserted at ' + at + ': ' + before + ' <= ' + mine + ' < ' + after);
+}
+check('Eucla lands in the middle of the row, not at either end',
+  _almTzInsertAt('Australia/Eucla', JAN) > 0 &&
+  _almTzInsertAt('Australia/Eucla', JAN) < _TZ_CITIES.length,
+  'got ' + _almTzInsertAt('Australia/Eucla', JAN));
+check('a zone nobody can read goes last rather than somewhere wrong',
+  _almTzInsertAt('Not/AZone', JAN) === _TZ_CITIES.length);
 
 console.log('');
 if (failed) {

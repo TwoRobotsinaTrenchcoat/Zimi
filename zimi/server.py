@@ -491,6 +491,21 @@ def _shape_store(measured):
 # None is a real answer here and the common one — most ZIMs were published by
 # somebody else — so the record wraps it rather than storing it bare, and an
 # absent record means "not looked at yet" instead of "looked at, not ours".
+def zim_signature(name):
+    """``(mtime, size)`` for an installed ZIM, from the list cache, or None.
+
+    The file's identity, free: no stat, no archive open, no lock. Replacing a
+    ZIM or re-running a capture over the same filename changes it, which is
+    exactly the question a cached picture has to be able to ask."""
+    for entry in _zim_list_cache or []:
+        if entry.get("name") == name:
+            mtime, size = entry.get("mtime"), entry.get("size_bytes")
+            if mtime is not None and size is not None:
+                return (mtime, size)
+            return None
+    return None
+
+
 def kind_store(records):
     """Remember ``{name: {"file": ..., "sig": ..., "kind": ...}}``. One write.
 
@@ -2823,6 +2838,10 @@ def load_cache(force=False):
             # open without adding a read of every file to it.
             if cached.get("shape"):
                 entry["shape"] = cached["shape"]
+            # The file's own identity, carried on the entry. Small, and it is
+            # what lets a picture request be answered from the client's copy
+            # without opening the archive to find out — see _picture_etag.
+            entry["mtime"] = mtime
             info.append(entry)
             cached_out = dict(cached)
             if first_seen is not None:
@@ -2838,6 +2857,7 @@ def load_cache(force=False):
             if first_seen is not None:
                 entry["first_seen"] = first_seen
             entry["updated_at"] = updated_at
+            entry["mtime"] = mtime
             info.append(entry)
             scanned += 1
             new_cached = {

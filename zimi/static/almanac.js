@@ -3467,11 +3467,16 @@ function _initTzClock(now) {
   var cards = _TZ_CITIES.map(function(c, i) {
     return { tz: c.tz, label: t('alm_city_' + c.key), idx: i };
   });
-  // Off the tour entirely: it gets a card of its own at the head of the row,
-  // so whatever was picked is always on screen. See _almTzCardMatch.
+  // Off the tour entirely: it gets a card of its own. Inserted where its clock
+  // belongs rather than shoved to the front — the row reads west to east, and a
+  // +8:45 card sitting to the left of Honolulu makes the whole line nonsense
+  // (Eric: "when we pop the custom one in be sure to put it in the right
+  // position"). See _almTzCardMatch for why -1 happens at all.
   if (localMatch === -1) {
-    cards.unshift({ tz: targetTz, label: _almTzCardLabel(targetTz), idx: -1 });
-    localMatch = 0;
+    localMatch = _almTzInsertAt(targetTz, now);
+    cards.splice(localMatch, 0, {
+      tz: targetTz, label: _almTzCardLabel(targetTz), idx: -1,
+    });
   }
 
   // Render city cards with times
@@ -3545,6 +3550,26 @@ function _almTzCardMatch(targetTz, now) {
     try { if (_tzUtcOffsetMin(_TZ_CITIES[i].tz, now) === targetOff) return i; } catch (e) {}
   }
   return -1;
+}
+
+// Where an off-tour zone's card goes in the row: before the first curated city
+// whose clock is ahead of it, or last when nothing is.
+//
+// By measured offset, not by guessing from the table's order, because the two
+// can disagree — the row is written west to east but DST moves cities past each
+// other twice a year, and a fractional zone sits BETWEEN two of them by
+// definition. A zone whose offset cannot be read goes last rather than
+// somewhere wrong.
+function _almTzInsertAt(tz, now) {
+  var mine = null;
+  try { mine = _tzUtcOffsetMin(tz, now); } catch (e) { return _TZ_CITIES.length; }
+  if (mine === null) return _TZ_CITIES.length;
+  for (var i = 0; i < _TZ_CITIES.length; i++) {
+    var other = null;
+    try { other = _tzUtcOffsetMin(_TZ_CITIES[i].tz, now); } catch (e) { continue; }
+    if (other !== null && other > mine) return i;
+  }
+  return _TZ_CITIES.length;
 }
 
 // The name on a card for a zone that is not one of the curated cities: the
