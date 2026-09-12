@@ -15069,7 +15069,21 @@ function openReader(url) {
     // already gives a captured page before it measures anything.
     var _replayAlive = false;
     try { _replayAlive = !!(frame.contentWindow && frame.contentWindow._wb_wombat); } catch (e) {}
+    // Zimi's own pages get loaded into this frame too — today that is the
+    // pdf.js viewer. They are not captured web pages, so none of the passes
+    // that tidy up a capture may run on them. Everything below here that edits
+    // the document already checked the frame's path for itself; these two did
+    // not, and the hollow-block collapse is the one that could not survive it.
+    //
+    // At frame.onload pdf.js has parsed the document but has not painted a
+    // canvas yet — that comes a moment later, off an IntersectionObserver. So
+    // #viewerContainer is, at exactly that instant, a tall empty transparent
+    // box with no embedded media in it, which is the description of an
+    // abandoned ad slot. It got height:0 !important, nothing was ever in view
+    // again for pdf.js's own observer, and no page ever rendered. Reported by
+    // Joe (WB3IHY), with the cause and the fix (#71).
     var _settlePasses = function() {
+      if (_frameIsOurOwnPage(frame)) return;
       try { _sweepBlockingOverlays(frame); } catch(e) {}
       try { _settleCapturedChrome(frame); } catch(e) {}
     };
@@ -18013,6 +18027,18 @@ function _isHollow(el) {
 // Long enough for a React app to hydrate on a slow machine, short enough that
 // a consent wall is not left standing while somebody reads.
 var REPLAY_SETTLE_MS = 2500;
+
+// Whether what the reader frame is showing is Zimi's own page rather than
+// something out of a ZIM. Everything that edits a captured page's DOM has to
+// ask first: our own pages are not captures, and the cleanup meant for one
+// breaks the other.
+function _frameIsOurOwnPage(frame) {
+  try {
+    return frame.contentWindow.location.pathname.startsWith('/static/');
+  } catch (e) {
+    return false;  // unreadable is not ours; treat it as a page, not a tool
+  }
+}
 
 function _settleCapturedChrome(frame) {
   var doc = frame.contentDocument;
