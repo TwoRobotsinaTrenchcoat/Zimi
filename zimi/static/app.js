@@ -10037,7 +10037,17 @@ function _creatorLoadInventory() {
     var el = document.getElementById('ms-cr-made');
     if (el && _msSection === 'creator') el.innerHTML = _creatorMadeHtml(_creatorInventory || {});
   };
-  if (_creatorInventory) { fill(); return; }
+  // Never synchronously. This is called from inside _creatorHtml, WHILE that
+  // function is still building the string it is about to return — so a fill
+  // that runs now writes into the DOM the pane is about to replace, and the
+  // "Loading…" placeholder in the string being built lands on top of it and
+  // stays there for ever (Eric: "MADE HERE never completes Loading…").
+  //
+  // Nothing about the fetch made this visible: it happens precisely when the
+  // answer is ALREADY here, so the faster the server is, the more reliably it
+  // hangs. A timeout puts the fill after the caller's innerHTML assignment,
+  // the same way _msCreatorHtml already defers its own first render.
+  if (_creatorInventory) { setTimeout(fill, 0); return; }
   manageFetch('/manage/creator/inventory').then(function(r) { return r.json(); }).then(function(d) {
     _creatorInventory = d;
     fill();
