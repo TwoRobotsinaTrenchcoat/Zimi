@@ -148,3 +148,37 @@ def test_the_window_is_short_and_revalidated(library):
         "long enough that a re-render does not ask, short enough that a "
         "re-captured ZIM's icon appears while the admin is still looking"
     )
+
+
+def test_the_bookkeeping_the_etag_needs_stays_off_the_wire(library):
+    """The file identity lives on the same dict as the facts, because that dict
+    IS the library cache. /list must not carry it.
+
+    That payload is what the home screen waits on. On a 74-ZIM library these
+    two fields were 19% of it — 9 KB of 47 KB — for a copy of the provenance
+    record that /zim-info?kinds=1 already serves deliberately, and an mtime
+    that first_seen and updated_at already answer for.
+    """
+    entry = dict(
+        library[0],
+        zimi_kind={"file": "atlas.zim", "sig": ["atlas.zim", 4096], "kind": {}},
+        title="Atlas",
+    )
+    public = zhttp._public_zim_entry(entry)
+
+    for private in zhttp._PRIVATE_ZIM_FIELDS:
+        assert private not in public, f"{private} reached the client"
+    # Everything a client actually reads survives.
+    for kept in ("name", "file", "size_bytes", "title"):
+        assert public[kept] == entry[kept]
+
+    # And the server still has what the tag is built from — the projection is a
+    # copy, so stripping the response must not strip the cache.
+    assert "mtime" in entry and "zimi_kind" in entry
+    assert _Handler()._picture_etag("atlas", "-/icon") == '"icon-1700000000-4096"'
+
+
+def test_an_entry_with_nothing_private_is_passed_straight_through(library):
+    """No copy per ZIM per request when there is nothing to remove."""
+    plain = {"name": "atlas", "file": "atlas.zim"}
+    assert zhttp._public_zim_entry(plain) is plain

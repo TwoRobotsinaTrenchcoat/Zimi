@@ -914,6 +914,22 @@ def _random_pick_verdict(
     return "fallback"
 
 
+# Bookkeeping the server keeps on a library entry and no client has any use
+# for. It rides on the same dict as the facts, because that dict IS the cache —
+# but /list is the payload the home screen waits on, and on a 74-ZIM library
+# these two were 19% of it (9 KB of 47 KB): a copy of the provenance record
+# that /zim-info?kinds=1 already serves on purpose, and an mtime that
+# first_seen and updated_at already answer for.
+_PRIVATE_ZIM_FIELDS = ("zimi_kind", "mtime")
+
+
+def _public_zim_entry(entry):
+    """One library entry as a client should see it."""
+    if not any(k in entry for k in _PRIVATE_ZIM_FIELDS):
+        return entry
+    return {k: v for k, v in entry.items() if k not in _PRIVATE_ZIM_FIELDS}
+
+
 def _zim_file_sig(entry):
     """The file identity a memoized provenance record is valid for."""
     return (entry or {}).get("file", ""), (entry or {}).get("size_bytes", 0)
@@ -1981,6 +1997,7 @@ class ZimHandler(BaseHTTPRequestHandler):
                         {**z, "category": overrides.get(z["name"], z.get("category"))}
                         for z in result
                     ]
+                result = [_public_zim_entry(z) for z in result]
                 # Additive envelope: ?layout=1 carries the top-level section_order
                 # alongside the ZIMs. The bare array shape stays the default so
                 # existing API consumers are unaffected.

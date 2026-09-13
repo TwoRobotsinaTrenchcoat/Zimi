@@ -305,8 +305,21 @@ def main():
     )
     ap.add_argument("--out", default=str(ROOT / "survey" / "sites"))
     ap.add_argument("--only", default="", help="run sites whose URL contains this")
+    ap.add_argument(
+        "--engine",
+        default="",
+        help=(
+            "capture every site with this engine instead of the one it was "
+            "reported with — for sweeping the matrix before a release. Read "
+            "the interactions with that in mind: a site reported because it "
+            "needed a running page cannot pass its own check under an engine "
+            "that freezes one, and that is the engine being honest."
+        ),
+    )
     args = ap.parse_args()
     sites = [s for s in load_registry() if args.only in s["url"]]
+    if args.engine:
+        sites = [dict(s, engine=args.engine) for s in sites]
     records = run(sites, pathlib.Path(args.out))
     failed = [r for r in records if not r.get("pass")]
     print(

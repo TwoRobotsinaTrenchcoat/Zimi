@@ -3207,12 +3207,21 @@ class RenderedCapture:
         sink, item_factory = target
         page = self._pages.pop(final_url, None)
         resources = page.resources if page is not None else {}
-        self.last_shot = getattr(page, "shot", None)
-        # Imported here rather than at module scope: zimwriter is the writer
-        # stack, and a renderer that only ever renders should not pull it in.
-        from zimi.zimwriter import announce_shot
+        # The FIRST page only, the same rule the recording engine keeps. A
+        # crawl calls render() for every URL in the frontier, so assigning each
+        # time would leave "the live page" meaning whichever page the crawl
+        # happened to reach last — and the picture on the running job would
+        # walk from page to page instead of showing the site that was asked
+        # for. What a person handed us is the seed, and that is what this is a
+        # picture of.
+        if self.last_shot is None:
+            self.last_shot = getattr(page, "shot", None)
+            # Imported here rather than at module scope: zimwriter is the
+            # writer stack, and a renderer that only renders should not pull
+            # it in.
+            from zimi.zimwriter import announce_shot
 
-        announce_shot(self._note, self.last_shot)
+            announce_shot(self._note, self.last_shot)
         assets = RenderedAssets(
             sink,
             resources,

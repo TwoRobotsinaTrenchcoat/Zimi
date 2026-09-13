@@ -136,3 +136,52 @@ def test_a_recording_pass_never_pays_for_a_second_face():
     # fails here, which is the "no opinion" answer, not a skip).
     plain = RenderedSession(note=lambda _m: None)
     assert plain._recorder is None
+
+def test_the_rendered_engine_pins_its_live_picture_too():
+    """The same rule as the recording engine, for the same reason.
+
+    A crawl calls render() for every URL in the frontier. Assigning the shot
+    each time leaves "the live page" meaning whichever page the crawl happened
+    to reach last, and — since the engines now announce the picture so the
+    running job can show it — makes that picture walk from page to page instead
+    of showing the site that was asked for.
+    """
+    from zimi import renderer
+
+    capture = renderer.RenderedCapture.__new__(renderer.RenderedCapture)
+    capture.last_shot = None
+    capture.carried = {}
+    capture.mimetypes = set()
+    capture.count = 0
+    capture._budget = None
+    capture._last_assets = None
+    announced = []
+    capture._note = announced.append
+
+    class _Page:
+        def __init__(self, shot):
+            self.shot = shot
+            self.resources = {}
+
+        def discard(self):
+            return 0
+
+    class _Session:
+        def release(self, _n):
+            pass
+
+    capture._session = _Session()
+    capture._pages = {
+        "https://example.com/": _Page(b"seed-shot"),
+        "https://example.com/two": _Page(b"second-page"),
+    }
+
+    def _sink(_item):
+        pass
+
+    for url in ("https://example.com/", "https://example.com/two"):
+        capture.render((_sink, None), "<html></html>", url)
+
+    assert capture.last_shot == b"seed-shot", "the crawl kept the last page's picture"
+    shots = [e for e in announced if isinstance(e, dict) and e.get("event") == "shot"]
+    assert len(shots) == 1, f"announced {len(shots)} times, not once for the seed"

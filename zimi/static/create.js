@@ -2715,7 +2715,11 @@ function _createSetShot(s) {
   var wrap = document.getElementById('create-live-shot');
   var img = document.getElementById('create-live-shot-img');
   if (!wrap || !img) return;
-  if (!s || !s.has_shot || !s.id) {
+  // Only while it runs. Its job is to show what is being captured during the
+  // wait; once the run is done the card below carries the live page AND the
+  // packaged one side by side, and leaving this up puts the same picture on
+  // screen twice.
+  if (!s || !s.has_shot || !s.id || s.done) {
     wrap.hidden = true;
     img.removeAttribute('src');
     return;

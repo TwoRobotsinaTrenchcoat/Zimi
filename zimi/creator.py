@@ -1220,6 +1220,25 @@ def _urlopen_retry(req, timeout, tries=3):
     raise last if last is not None else OSError("fetch failed with no error")
 
 
+# Characters a request target may not contain. A correctly encoded URL has
+# none of them, so substituting is safe against double-encoding: an existing
+# %20 is left alone and a literal space becomes one.
+_ILLEGAL_IN_REQUEST = re.compile(r"[\x00-\x20\x7f]")
+
+
+def _request_safe(url):
+    """``url`` with the characters http.client refuses percent-encoded.
+
+    Pages reference files whose names contain spaces. nerdfonts.com asks for
+    `/assets/fonts/Symbols-2048-em Nerd Font Complete v233.woff2`, which every
+    browser fetches by encoding the spaces and Python's http.client refuses
+    outright — so the font was not merely skipped, the exception escaped and
+    took the whole capture with it. Encoding is what a browser does, so the
+    file is kept rather than lost.
+    """
+    return _ILLEGAL_IN_REQUEST.sub(lambda m: "%%%02X" % ord(m.group()), url)
+
+
 def _http_asset_reader(origin, variants, timeout):
     """An ``_AssetCarrier`` asset reader pointed at HTTP: fetches
     ``origin/<resolved>``, same-origin by construction. Reads are capped at
@@ -1231,8 +1250,17 @@ def _http_asset_reader(origin, variants, timeout):
     def read(_label, resolved):
         cap = _zw._MAX_ASSET_BYTES
         url = origin + "/" + resolved
-        req = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
         try:
+            # Request() inside the try, and the same three exception families
+            # the remote-asset reader above catches, for the same reason it
+            # gives: no single asset may end a capture. InvalidURL is an
+            # HTTPException and not an OSError, so an unencodable reference —
+            # a font whose name has spaces in it — escaped this clause and
+            # killed the whole run. Same bug as the one already fixed sixty
+            # lines up; this is its twin, which was missed.
+            req = urllib.request.Request(
+                _request_safe(url), headers={"User-Agent": _user_agent()}
+            )
             with _urlopen_retry(req, timeout) as resp:
                 data = resp.read(cap + 1)
                 mime = (
@@ -1240,7 +1268,7 @@ def _http_asset_reader(origin, variants, timeout):
                     .split(";")[0]
                     .strip()
                 )
-        except OSError as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:
             log.debug("asset fetch failed %s: %s", url, e)
             return None
         if len(data) > cap:
@@ -1294,7 +1322,9 @@ def _http_remote_reader(timeout):
             #
             # Request() is inside the try because construction can raise too,
             # for a different set of malformed inputs than urlopen does.
-            req = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
+            req = urllib.request.Request(
+                _request_safe(url), headers={"User-Agent": _user_agent()}
+            )
             with _urlopen_retry(req, timeout) as resp:
                 mime = (
                     (resp.headers.get("Content-Type") or "")
