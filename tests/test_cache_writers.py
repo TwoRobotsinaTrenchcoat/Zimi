@@ -167,3 +167,53 @@ def test_the_file_is_never_left_half_written(library):
     r.start(), w.start()
     w.join(), r.join(timeout=10)
     assert not torn, f"a reader saw a half-written cache: {torn[:1]}"
+
+
+def test_nothing_writes_the_cache_behind_the_lock_s_back():
+    """A sixth writer must not appear without going through the same door.
+
+    This is how the Q-ID pass got it wrong: it opened cache.json itself, merged
+    its own field and wrote the whole file back, so it could land on top of a
+    shape saved a moment earlier and erase it. Reading the raw file also
+    skipped the version check, which means merging into a format this build no
+    longer understands and writing it back out.
+    """
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "zimi"
+    offenders = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = ""
+            if isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                name = node.func.id
+            if name != "_save_disk_cache":
+                continue
+            # server.py owns the two legitimate sites: inside the shared
+            # read-modify-write, and the wholesale rebuild that takes the same
+            # lock around it.
+            if path.name != "server.py":
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        "these write the metadata cache directly instead of through "
+        f"_update_disk_cache: {offenders}"
+    )
+
+    # And nobody outside server.py should be reaching for the file path either.
+    reaching = []
+    for path in sorted(root.glob("*.py")):
+        if path.name == "server.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for i, line in enumerate(text.split("\n"), 1):
+            if "_cache_file_path()" in line and not line.lstrip().startswith("#"):
+                reaching.append(f"{path.name}:{i}")
+    assert not reaching, (
+        f"these open the metadata cache directly: {reaching}"
+    )

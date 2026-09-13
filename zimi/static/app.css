@@ -747,8 +747,16 @@
   .create-phases { display: flex; align-items: flex-start; }
   .create-step { flex: 1 1 0; position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text3); text-align: center; }
   /* The rail between two steps belongs to the one on the right, which is what
-     lets the step on its LEFT light it with a sibling selector. */
-  .create-step + .create-step::before { content: ""; position: absolute; top: 5px; left: -50%; right: 50%; height: 1px; background: var(--border); }
+     lets the step on its LEFT light it with a sibling selector.
+     It runs BETWEEN the dots, not through them. Spanning centre-to-centre put
+     the line under each dot and out the other side, and the dot's fill is not
+     the page's, so what showed was a line ending halfway into a circle (Eric:
+     "the line is half way through the first step, looks bad"). The inset is
+     the dot's radius plus a little air. */
+  .create-step + .create-step::before {
+    content: ""; position: absolute; top: 5px; height: 1px; background: var(--border);
+    left: calc(-50% + 11px); right: calc(50% + 11px);
+  }
   .create-step[data-state="done"] + .create-step::before { background: var(--amber-border); }
   .create-step-dot { position: relative; z-index: 1; width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface2); }
   .create-step[data-state="done"] { color: var(--text2); }

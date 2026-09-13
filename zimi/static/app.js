@@ -3452,13 +3452,13 @@ function _refreshCardAges() {
     if (!detail) continue;
     var zim = _zimInfo(cards[i].dataset.zim);
     var was = detail.querySelector('.card-when');
-    if (was) {
-      // Drop the separator that was written in front of it, too.
-      var sep = was.previousSibling;
-      if (sep && sep.nodeType === 3 && /\u00b7\s*$/.test(sep.textContent)) sep.remove();
-      was.remove();
-    }
-    if (zim) detail.insertAdjacentHTML('beforeend', _sortedByDateHtml(zim));
+    if (was) was.remove();
+    var html = zim ? _sortedByDateHtml(zim) : '';
+    if (html) detail.insertAdjacentHTML('beforeend', html);
+    // The ZIM's own date steps aside while the sorted one is there, and comes
+    // back when it goes.
+    var own = detail.querySelector('.card-date');
+    if (own) own.hidden = !!html;
   }
 }
 // One comparator per order, so the sort is a lookup rather than a branch at
@@ -3952,33 +3952,46 @@ function _openZimAbout(zim) {
 // date IS what they are reading the list by — and an order you cannot see the
 // key of is an order you have to take on trust. So it appears because it was
 // asked for, and leaves when it stops being the question.
+// The ZIM's own date, hidden while the one being sorted by is on the card:
+// "· 2026-09-12 · Added Sep 12" is the same fact twice, and the one that
+// carries its meaning with it is the one worth keeping.
+function _cardOwnDateHtml(z) {
+  if (!_isZimiExport(z) || !z.date) return '';
+  return '<span class="card-date"' + (_sortedByDateHtml(z) ? ' hidden' : '') +
+    '> &middot; ' + esc(z.date) + '</span>';
+}
+
 function _sortedByDateHtml(z) {
   var by = _librarySort();
   var ts = by === 'added' ? z.first_seen : by === 'updated' ? z.updated_at : null;
   if (!ts) return '';
-  var age = _shortAge(ts);
-  if (!age) return '';
-  return ' &middot; <span class="card-when" title="' +
-    escAttr(new Date(ts * 1000).toLocaleString(_currentLang || 'en')) + '">' +
-    esc(age) + '</span>';
+  var when = _prettyDate(ts);
+  if (!when) return '';
+  // Which date this is, not just a date. Two orders put a date on the card and
+  // they mean opposite things — the day a ZIM arrived and the day its contents
+  // changed — so a bare date is a number you have to remember the context of
+  // (Eric: "should say the context like updated <date> or added").
+  return '<span class="card-when" title="' +
+    escAttr(new Date(ts * 1000).toLocaleString(_currentLang || 'en')) + '"> &middot; ' +
+    tH(by === 'added' ? 'card_added_on' : 'card_updated_on', { date: esc(when) }) +
+    '</span>';
 }
 
-// An age short enough to sit on the end of a line that already holds a count
-// and a size. "21 hours ago" pushed that line onto two rows on a phone, which
-// costs more than the words were worth; the exact moment is a tooltip away and
-// nobody scanning a sorted list wants it. Units stop at the largest that fits
-// in two characters, because the question here is only ever "how recent".
-var _AGE_STEPS = [
-  ['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60],
-];
-function _shortAge(tsSec) {
+// A date a person reads rather than counts: "12 Sep", and the year too once it
+// stops being obvious. Written out beats an elapsed time here — "21 hours ago"
+// pushed the detail line onto two rows on a phone, and a date is both shorter
+// and the thing you are actually sorting by. The exact moment stays a tooltip.
+function _prettyDate(tsSec) {
   if (!tsSec) return '';
-  var secs = Math.max(0, Math.round(Date.now() / 1000 - tsSec));
-  for (var i = 0; i < _AGE_STEPS.length; i++) {
-    var n = Math.floor(secs / _AGE_STEPS[i][1]);
-    if (n >= 1) return n + _AGE_STEPS[i][0];
+  var d = new Date(tsSec * 1000);
+  if (isNaN(d.getTime())) return '';
+  var opts = { day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  try {
+    return d.toLocaleDateString(_currentLang || 'en', opts);
+  } catch (e) {
+    return d.toISOString().slice(0, 10);
   }
-  return t('just_now');
 }
 
 function renderCardGrid(items, showStars, showCategory) {
@@ -4028,8 +4041,10 @@ function renderCardGrid(items, showStars, showCategory) {
         (z.description ? '<div class="desc">' + esc(z.description) + '</div>' : '') +
         '<div class="detail">' + catPrefix + _zimCountHtml(z) +
         ' &middot; ' + fmtSize(z.size_gb) +
-        (_isZimiExport(z) && z.date ? ' &middot; ' + esc(z.date) : '') +
-        _sortedByDateHtml(z) +
+        // Both dates carry their own separator, so either can be taken out
+        // without leaving a dangling middot behind — which is what lets the
+        // in-place re-sort swap them without rebuilding the card.
+        _cardOwnDateHtml(z) + _sortedByDateHtml(z) +
         '</div>' +
       '</div></' + cardTag + '>';
   }).join('') + '</div>';
