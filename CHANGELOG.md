@@ -33,8 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Faster
 
-- The library redraws without re-reading every icon from disk.
-- Changing the sort order slides the cards instead of rebuilding them.
 - Discover no longer holds up the rest of the app while it fills.
 - Manage → Creator opens at once instead of after several seconds.
 - Background jobs stopped undoing each other's work, which had the disk measuring the same files over and over.
