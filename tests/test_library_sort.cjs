@@ -27,6 +27,7 @@ function grab(name, kind) {
 }
 
 const store = {};
+const sandboxCalls = { rebuilt: 0, reordered: 0, canReorder: true };
 const sandbox = {
   console,
   localStorage: {
@@ -34,7 +35,10 @@ const sandbox = {
     setItem: (k, v) => { store[k] = String(v); },
   },
   SK: { LIBRARY_SORT: 'zimi_library_sort' },
-  renderHome: () => {},
+  // Changing the order moves the cards in place; when it cannot, the caller
+  // rebuilds. Both are recorded so the fallback is a fact rather than a hope.
+  renderHome: () => { sandboxCalls.rebuilt++; },
+  _reorderLibraryInPlace: () => { sandboxCalls.reordered++; return sandboxCalls.canReorder; },
   _byFirstSeenDesc: (a, b) => (b.first_seen || 0) - (a.first_seen || 0),
   _byUpdatedDesc: (a, b) => (b.updated_at || 0) - (a.updated_at || 0),
 };
@@ -133,6 +137,22 @@ vm.runInContext("_setLibrarySort('added')", sandbox);
 sandbox.undatedZim = { name: 'old' };
 check(vm.runInContext('_sortedByDateHtml(undatedZim)', sandbox) === '',
       'an undated ZIM shows nothing rather than a broken date');
+
+// ── moving beats rebuilding, and rebuilding is still there when it must be ──
+sandboxCalls.rebuilt = 0; sandboxCalls.reordered = 0; sandboxCalls.canReorder = true;
+vm.runInContext("_setLibrarySort('entries')", sandbox);
+check(sandboxCalls.reordered === 1 && sandboxCalls.rebuilt === 0,
+      'changing the order moves the cards instead of rebuilding them');
+
+sandboxCalls.canReorder = false;
+vm.runInContext("_setLibrarySort('alpha')", sandbox);
+check(sandboxCalls.rebuilt === 1,
+      'and rebuilds when the page is not the shape the move expects');
+
+sandboxCalls.rebuilt = 0; sandboxCalls.reordered = 0;
+vm.runInContext("_setLibrarySort('nonsense')", sandbox);
+check(sandboxCalls.reordered === 0 && sandboxCalls.rebuilt === 0,
+      'an order nobody offers does neither');
 
 if (failures) { console.error(failures + ' failure(s)'); process.exit(1); }
 console.log('all library sort checks passed');

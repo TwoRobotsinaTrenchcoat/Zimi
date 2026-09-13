@@ -3351,7 +3351,115 @@ function _librarySort() {
 function _setLibrarySort(mode) {
   if (LIBRARY_SORTS.indexOf(mode) < 0) return;
   localStorage.setItem(SK.LIBRARY_SORT, mode);
-  renderHome();
+  // Move the cards rather than rebuild them. Changing the order changes only
+  // the order: the same cards, in a different sequence. Rebuilding threw the
+  // whole library away and made it again, which reads as the page flashing
+  // (Eric: "don't like how it all flashes when I change the sort type, can it
+  // flow to the new position nicely like in iOS"). Falls back to a full render
+  // if anything about the page is not the shape this expects.
+  if (!_reorderLibraryInPlace()) renderHome();
+}
+
+// How long a card takes to slide to its new place. Short enough to feel like a
+// response to the tap and not an animation being performed at you.
+var LIBRARY_REFLOW_MS = 320;
+
+// Re-sort every card grid on screen, in place, animating each card from where
+// it was to where it now belongs. Returns false when it cannot — the caller
+// then does the honest thing and rebuilds.
+function _reorderLibraryInPlace() {
+  if (!output || !zimsCache || !zimsCache.length) return false;
+  var grids = output.querySelectorAll('.stats-grid');
+  if (!grids.length) return false;
+  var compare = _LIBRARY_SORTERS[_librarySort()] || _LIBRARY_SORTERS.alpha;
+  var still = false;
+  try {
+    still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) {}
+
+  var moves = [];
+  for (var g = 0; g < grids.length; g++) {
+    var grid = grids[g];
+    var cards = Array.prototype.slice.call(grid.querySelectorAll('.stat-card[data-zim]'));
+    if (cards.length < 2) continue;
+    var known = cards.map(function(card) {
+      return { card: card, zim: _zimInfo(card.dataset.zim) };
+    });
+    // A card whose ZIM we cannot look up means the page and the library have
+    // drifted apart; a rebuild is the only honest answer.
+    if (known.some(function(k) { return !k.zim; })) return false;
+    var sorted = known.slice().sort(function(a, b) { return compare(a.zim, b.zim); });
+    var same = sorted.every(function(k, i) { return k.card === known[i].card; });
+    if (same) continue;
+    moves.push({ grid: grid, sorted: sorted, cards: cards });
+  }
+
+  // The date each card carries is the one being sorted by, so it changes even
+  // where the order does not.
+  _refreshCardAges();
+  if (!moves.length) return true;
+
+  moves.forEach(function(m) {
+    var before = still ? null : m.cards.map(function(c) { return c.getBoundingClientRect(); });
+    m.sorted.forEach(function(k) { m.grid.appendChild(k.card); });
+    if (still) return;
+    // First/Last/Invert/Play: put every card back where the eye last saw it,
+    // then let it travel to where it now is.
+    m.cards.forEach(function(card, i) {
+      var now = card.getBoundingClientRect();
+      var dx = before[i].left - now.left;
+      var dy = before[i].top - now.top;
+      if (!dx && !dy) return;
+      card.style.transition = 'none';
+      card.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    });
+  });
+  if (still) return true;
+
+  // One frame later, with every card parked at its old position, release them
+  // all together so the whole shelf moves as one thing.
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      moves.forEach(function(m) {
+        m.cards.forEach(function(card) {
+          if (!card.style.transform) return;
+          card.style.transition = 'transform ' + LIBRARY_REFLOW_MS +
+            'ms cubic-bezier(0.22, 0.61, 0.36, 1)';
+          card.style.transform = '';
+        });
+      });
+      setTimeout(function() {
+        moves.forEach(function(m) {
+          m.cards.forEach(function(card) {
+            card.style.transition = '';
+            card.style.transform = '';
+          });
+        });
+      }, LIBRARY_REFLOW_MS + 60);
+    });
+  });
+  return true;
+}
+
+// The age on each card, after the thing being sorted by has changed. Rewrites
+// only that one span, so nothing else on the card is touched — which is the
+// whole point of not rebuilding.
+function _refreshCardAges() {
+  if (!output) return;
+  var cards = output.querySelectorAll('.stat-card[data-zim]');
+  for (var i = 0; i < cards.length; i++) {
+    var detail = cards[i].querySelector('.detail');
+    if (!detail) continue;
+    var zim = _zimInfo(cards[i].dataset.zim);
+    var was = detail.querySelector('.card-when');
+    if (was) {
+      // Drop the separator that was written in front of it, too.
+      var sep = was.previousSibling;
+      if (sep && sep.nodeType === 3 && /\u00b7\s*$/.test(sep.textContent)) sep.remove();
+      was.remove();
+    }
+    if (zim) detail.insertAdjacentHTML('beforeend', _sortedByDateHtml(zim));
+  }
 }
 // One comparator per order, so the sort is a lookup rather than a branch at
 // each call site.

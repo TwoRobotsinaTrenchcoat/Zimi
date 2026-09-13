@@ -2920,9 +2920,14 @@
   .dc-dismiss { background: none; border: none; color: var(--text2); font-size: 16px; cursor: pointer; padding: 0 4px; opacity: 0.4; transition: opacity 0.2s; line-height: 1; }
   .dc-dismiss:hover { opacity: 1; color: var(--text); }
   .discover-scroll { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding: 8px 2px; margin: -8px -2px; will-change: transform; }
-  .discover-scroll::-webkit-scrollbar { height: 4px; }
-  .discover-scroll::-webkit-scrollbar-track { background: transparent; }
-  .discover-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  /* No scrollbar under the strip. The thumb was a short line reaching about
+     halfway across, sitting under the cards and reading as an artefact rather
+     than a control (Eric: "would be nice to have it be solid so I can't see
+     it"). The row snap-scrolls and its next card is always cut off at the
+     edge, which is what actually says "there is more" — the bar said it a
+     second time, worse. */
+  .discover-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+  .discover-scroll::-webkit-scrollbar { height: 0; width: 0; }
   .discover-card {
     flex: 0 0 260px; min-height: 200px; max-height: 320px; scroll-snap-align: start;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
