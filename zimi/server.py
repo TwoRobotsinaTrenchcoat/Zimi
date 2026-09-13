@@ -452,6 +452,36 @@ def _shape_backfill_pass(_zw):
         log.info("measured what %d ZIM(s) are made of", done)
 
 
+# One writer at a time for the metadata cache.
+#
+# Four separate places read that file, change part of it and write the whole
+# thing back: the shape worker, the provenance walk, and registering or
+# unregistering a single ZIM. They run on different threads — the provenance
+# one from whichever request asked for it — so two of them interleaving means
+# the second save is built on a copy taken before the first, and the first's
+# work is simply gone.
+#
+# Losing a shape is not a cosmetic loss. The shape worker re-measures anything
+# without one, and measuring means walking every entry in the file; on a
+# 40 GB Wikipedia that is minutes of the global libzim lock, every quarter of
+# an hour, forever. Eric heard it as the NAS cranking and saw it as Manage ->
+# Creator never finishing, because the walk starves the request that would
+# have answered it.
+_disk_cache_lock = threading.RLock()
+
+
+def _update_disk_cache(mutate):
+    """Read the metadata cache, let ``mutate`` change it, write it back.
+
+    All of it under one lock, so a change is never built on a copy that has
+    since been superseded. ``mutate`` returns True when it changed anything;
+    an unchanged cache is not rewritten."""
+    with _disk_cache_lock:
+        disk = _load_disk_cache() or {}
+        if mutate(disk):
+            _save_disk_cache(disk)
+
+
 def _shape_store(measured):
     """Write the shapes into the live list and the disk cache, together.
 
@@ -462,16 +492,18 @@ def _shape_store(measured):
         shape = measured.get(entry.get("name"))
         if shape:
             entry["shape"] = shape
-    disk = _load_disk_cache() or {}
-    touched = False
-    for entry in _zim_list_cache or []:
-        shape = measured.get(entry.get("name"))
-        cached = disk.get(entry.get("file", ""))
-        if shape and isinstance(cached, dict):
-            cached["shape"] = shape
-            touched = True
-    if touched:
-        _save_disk_cache(disk)
+
+    def _apply(disk):
+        touched = False
+        for entry in _zim_list_cache or []:
+            shape = measured.get(entry.get("name"))
+            cached = disk.get(entry.get("file", ""))
+            if shape and isinstance(cached, dict):
+                cached["shape"] = shape
+                touched = True
+        return touched
+
+    _update_disk_cache(_apply)
 
 
 # Provenance survives a restart, because the walk that builds it does not.
@@ -519,15 +551,17 @@ def kind_store(records):
         record = records.get(entry.get("name"))
         if record:
             entry["zimi_kind"] = record
-    disk = _load_disk_cache() or {}
-    touched = False
-    for record in records.values():
-        cached = disk.get(record.get("file") or "")
-        if isinstance(cached, dict):
-            cached["zimi_kind"] = record
-            touched = True
-    if touched:
-        _save_disk_cache(disk)
+
+    def _apply(disk):
+        touched = False
+        for record in records.values():
+            cached = disk.get(record.get("file") or "")
+            if isinstance(cached, dict):
+                cached["zimi_kind"] = record
+                touched = True
+        return touched
+
+    _update_disk_cache(_apply)
 
 
 def _maintenance_pass():
@@ -2902,7 +2936,10 @@ def load_cache(force=False):
     # Persist cache if we scanned anything new, backfilled a legacy first_seen
     # (so the mtime stamp is computed once), or repaired mass-stamped entries.
     if scanned > 0 or backfilled > 0 or disk_cache is None or healed or healed_updates:
-        _save_disk_cache(file_cache)
+        # Wholesale, not a merge — but under the same lock, so it cannot land
+        # in the middle of somebody else's read-modify-write.
+        with _disk_cache_lock:
+            _save_disk_cache(file_cache)
 
     cached_count = len(info) - scanned
     if cached_count > 0 and scanned > 0:
@@ -3185,13 +3222,14 @@ def register_zim_file(path, removed_files=()):
         # stamp inheritance, but a concurrent full load_cache (manage
         # refresh) may have rewritten the file since — mutate the freshest
         # version so its work isn't clobbered.
-        disk_now = _load_disk_cache()
-        if disk_now is not None:
+        def _apply(disk_now):
             for _fn in list(disk_now):
                 if _fn in removed or _zim_short_name(_fn) == name:
                     disk_now.pop(_fn, None)
             disk_now[filename] = new_cached
-            _save_disk_cache(disk_now)
+            return True
+
+        _update_disk_cache(_apply)
         # Domain map: merge ONLY this ZIM's domains. The full rebuild
         # (_build_domain_zim_map) opens every unmapped archive via
         # get_archive — with a cold pool (e.g. right after a previous
@@ -3316,15 +3354,15 @@ def unregister_zim_file(filename):
         _cache_generation += 1
         # Re-read under the lock: a concurrent load_cache may have rewritten
         # the file since phase 1, so mutate the freshest version.
-        disk_now = _load_disk_cache()
-        if disk_now is not None:
+        def _apply(disk_now):
             dropped = [
                 fn for fn in disk_now if fn in dead_files or _zim_short_name(fn) in gone
             ]
-            if dropped:
-                for fn in dropped:
-                    disk_now.pop(fn, None)
-                _save_disk_cache(disk_now)
+            for fn in dropped:
+                disk_now.pop(fn, None)
+            return bool(dropped)
+
+        _update_disk_cache(_apply)
         if gone:
             # Drop this ZIM's domain claims so _resolve_url_to_zim stops
             # answering with a name that no longer resolves. Rebound, not

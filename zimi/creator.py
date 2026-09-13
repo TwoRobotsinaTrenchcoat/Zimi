@@ -1039,6 +1039,46 @@ def looks_like_spa(page):
     return len(_visible_text(page)) < SPA_MIN_TEXT_CHARS
 
 
+# What a client-side framework leaves in the HTML it served. Every one of these
+# is a runtime that expects to take the page over once it loads.
+#
+# Deliberately a list of things frameworks put in their own output rather than
+# a guess from markup shape: a hydration payload, a build-output directory, a
+# root the framework claims by id. Missing one costs a worse recommendation,
+# never a worse capture.
+_APP_RUNTIME_MARKERS = (
+    "__NEXT_DATA__",
+    "self.__next_f",
+    "/_next/static",
+    "__NUXT__",
+    "/_nuxt/",
+    "__remixContext",
+    "__sveltekit_",
+    "data-reactroot",
+    "ng-version=",
+    "__vite_plugin",
+    "/@vite/client",
+)
+
+
+def looks_like_app(page):
+    """True when the page ships a client-side framework's runtime.
+
+    Different question from ``looks_like_spa``, and the one that was missing.
+    A shell with no text is obvious; a SERVER-RENDERED app is not. Next.js
+    sends draculatheme.com's whole theme grid as HTML, so it reads as an
+    ordinary page by text alone — and then its palette tabs, its theme switch
+    and its search are all JavaScript, and a frozen snapshot has none of them.
+    Eric, 2026-09-12: "why did it recommend fast instead of something better!?"
+
+    Being an app does not make a capture bad, and plenty of pages are worth
+    freezing exactly as they are. It means the fast engine is the wrong DEFAULT
+    to offer, because what it drops is invisible until somebody clicks."""
+    if not page:
+        return False
+    return any(marker in page for marker in _APP_RUNTIME_MARKERS)
+
+
 # ── content language ────────────────────────────────────────────────────────
 #
 # What language a page is written in is a FACT ABOUT THE PAGE, not a preference
@@ -2019,17 +2059,34 @@ class BuiltinCapture:
         session = self._picture_session()
         if session is None:
             return None, None
-        live = session.shoot_live(final_url)
+        # Already taken during fetch, on the ordinary path. Only re-shot when
+        # something skipped that — a caller handing us HTML it fetched itself.
+        live = self.last_shot or session.shoot_live(final_url)
         packaged = session.shoot_packaged(html, self._last_by_path, mainpath=mainpath)
         self._last_by_path = {}
-        self.last_shot = live
-        announce_shot(self._note, live)
+        if self.last_shot is None:
+            self.last_shot = live
+            announce_shot(self._note, live)
         return live, packaged
 
     def fetch(self, url):
-        return _fetch_html(
+        result = _fetch_html(
             url, timeout=self._timeout, max_redirects=self._max_redirects
         )
+        # The picture of the live page, taken HERE rather than at packaging
+        # time. It used to ride along with the packaged one at the very end of
+        # the run, which meant the one engine most likely to be chosen for a
+        # quick capture was the one that showed nothing while it worked —
+        # Eric asked for the source on screen during creation and, on this
+        # engine, only ever got it as the job finished. Same single visit and
+        # the same total cost; it just happens at the start now. The first page
+        # only, so a crawl shows the site it was pointed at.
+        if self.last_shot is None:
+            session = self._picture_session() if self._can_take_pictures() else None
+            if session is not None:
+                self.last_shot = session.shoot_live(result[0])
+                announce_shot(self._note, self.last_shot)
+        return result
 
     # No browser here, so no media query to flip and no second face to keep.
     other_face = None
@@ -2731,6 +2788,7 @@ def probe_page(
         "language": language,
         "language_source": language_source,
         "spa": looks_like_spa(page),
+        "app": looks_like_app(page),
         "bytes": nbytes,
         "assets": len(assets),
         "icon": _probe_icon_data_uri(final_url, timeout, page),

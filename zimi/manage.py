@@ -4159,6 +4159,7 @@ def _probe_url(source, *, want_robots=False, engine=None):
         _decode_page,
         _fetch_page,
         _page_title_from_html,
+        looks_like_app,
         looks_like_spa,
     )
 
@@ -4168,6 +4169,10 @@ def _probe_url(source, *, want_robots=False, engine=None):
     page = _decode_page(data, ctype)
     is_html = "html" in (ctype or "").lower()
     spa = bool(is_html and looks_like_spa(page))
+    # A page can be server-rendered and still be an application. See
+    # looks_like_app: what the fast engine drops there is invisible until
+    # somebody clicks, which is the worst way to find out.
+    app = bool(is_html and looks_like_app(page))
     # Both browser engines answer the SPA question the same way, so they are
     # one flag rather than two comparisons that could drift apart.
     rendered = engine in ("rendered", "alive")
@@ -4182,6 +4187,7 @@ def _probe_url(source, *, want_robots=False, engine=None):
         "content_type": (ctype or "").split(";")[0].strip(),
         "bytes": len(data),
         "spa": spa,
+        "app": app,
         "language": language or _iso3_of(clang),
         "warning_key": None,
     }

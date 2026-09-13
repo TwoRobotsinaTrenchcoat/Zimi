@@ -92,7 +92,9 @@ Object.assign(sandbox, {
   esc: (v) => String(v),
   escAttr: (v) => String(v),
 });
-vm.runInContext(grab('_relTime'), sandbox);
+sandbox.t = (k) => k;
+vm.runInContext(grab('_AGE_STEPS', 'var'), sandbox);
+vm.runInContext(grab('_shortAge'), sandbox);
 vm.runInContext(grab('_sortedByDateHtml'), sandbox);
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -106,11 +108,24 @@ check(shown('alpha') === '', 'alphabetical shows no date — it is not a date or
 check(shown('entries') === '', 'article count shows no date either');
 
 const added = shown('added');
-check(added.includes('card-when') && /hour/i.test(added),
-      'recently added shows the date it was added: ' + added.slice(0, 60));
+check(added.includes('card-when') && />1h</.test(added),
+      'recently added shows how long ago it was added: ' + added.slice(-24));
 const updated = shown('updated');
-check(/day/i.test(updated),
-      'recently updated shows the date it was updated: ' + updated.slice(0, 60));
+check(/>3d</.test(updated),
+      'recently updated shows how long ago it was updated: ' + updated.slice(-24));
+
+// Short enough to sit on a line that already holds a count and a size. The
+// long form pushed that line onto two rows on a phone.
+const ages = [[90, '1m'], [3600, '1h'], [172800, '2d'], [3456000, '1mo'], [34560000, '1y']];
+for (const [secs, want] of ages) {
+  const got = vm.runInContext('_shortAge(' + (NOW - secs) + ')', sandbox);
+  check(got === want, secs + 's ago reads as ' + want + ' (got ' + got + ')');
+  check(String(got).length <= 4, got + ' is short enough for the detail line');
+}
+// Under a minute has no useful unit, so it says so in words. The only row
+// here that is allowed to be a phrase.
+check(vm.runInContext('_shortAge(' + (NOW - 5) + ')', sandbox) === 'just_now',
+      'a ZIM added seconds ago reads as words, not "0m"');
 
 // Every library has some ZIM with no stamp. It must render nothing rather than
 // "Invalid Date" or a dangling separator.

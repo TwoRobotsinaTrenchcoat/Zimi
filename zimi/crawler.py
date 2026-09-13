@@ -91,6 +91,7 @@ from zimi.creator import (
     scratch_dir,
     site_illustration,
     spool_target,
+    looks_like_app,
 )
 from zimi import subproc
 from zimi.blocklist import blocked_phrase
@@ -985,6 +986,7 @@ def probe_site(url, *, ignore_robots=False, timeout=PROBE_TIMEOUT):
         "language": language,
         "language_source": language_source,
         "spa": looks_like_spa(seed_text),
+        "app": looks_like_app(seed_text),
         "robots": verdict,
         "crawl_delay": _robots_delay(robots, 0.0, _noop) or None,
         "fetched": fetched,

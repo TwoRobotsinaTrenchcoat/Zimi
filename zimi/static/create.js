@@ -614,6 +614,12 @@ function _createPreviewRows(p) {
     if (p.robots_allowed !== undefined) {
       add('create_pv_robots', t(p.robots_allowed ? 'create_pv_robots_ok' : 'create_pv_robots_no'));
     }
+    // Say what kind of page this is, because it is what decides the engine.
+    // An empty shell announces itself the moment you look at the capture; an
+    // application that server-rendered its text does not, and finding out
+    // means clicking something in a finished ZIM and watching nothing happen.
+    if (p.spa) add('create_pv_kind', t('create_pv_kind_shell'));
+    else if (p.app) add('create_pv_kind', t('create_pv_kind_app'));
   }
   if (p.language) add('create_pv_language', p.language + ' ' + t('create_pv_detected'));
   return rows;
@@ -1321,9 +1327,17 @@ function _createChipTarget(what, n, s) {
 // probe already knows that; the person should not have to. Rendered when the
 // server can run a browser, else Fast and the probe's own warning stands. The
 // alive engine is never picked here: it is the one you reach for on purpose.
+//
+// Two different questions, and only asking the first one got this wrong.
+// `spa` is "the document arrived empty", which is obvious. `app` is "the page
+// ships a framework runtime", which a SERVER-RENDERED app hides: Next.js sent
+// draculatheme.com's whole theme grid as HTML, so by text alone it read as an
+// ordinary page, and Fast was offered for something whose palette, theme
+// switch and search are all JavaScript (Eric: "why did it recommend fast
+// instead of something better!?").
 function _createEngineFor(p, browserReady) {
   if (!p || (p.mode !== 'page' && p.mode !== 'site')) return '';
-  return p.spa && browserReady ? 'rendered' : '';
+  return (p.spa || p.app) && browserReady ? 'rendered' : '';
 }
 
 // ── the surface ─────────────────────────────────────────────────────────────

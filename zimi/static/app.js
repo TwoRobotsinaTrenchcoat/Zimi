@@ -3848,11 +3848,29 @@ function _sortedByDateHtml(z) {
   var by = _librarySort();
   var ts = by === 'added' ? z.first_seen : by === 'updated' ? z.updated_at : null;
   if (!ts) return '';
-  var rel = _relTime(ts);
-  if (!rel) return '';
+  var age = _shortAge(ts);
+  if (!age) return '';
   return ' &middot; <span class="card-when" title="' +
     escAttr(new Date(ts * 1000).toLocaleString(_currentLang || 'en')) + '">' +
-    esc(rel) + '</span>';
+    esc(age) + '</span>';
+}
+
+// An age short enough to sit on the end of a line that already holds a count
+// and a size. "21 hours ago" pushed that line onto two rows on a phone, which
+// costs more than the words were worth; the exact moment is a tooltip away and
+// nobody scanning a sorted list wants it. Units stop at the largest that fits
+// in two characters, because the question here is only ever "how recent".
+var _AGE_STEPS = [
+  ['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60],
+];
+function _shortAge(tsSec) {
+  if (!tsSec) return '';
+  var secs = Math.max(0, Math.round(Date.now() / 1000 - tsSec));
+  for (var i = 0; i < _AGE_STEPS.length; i++) {
+    var n = Math.floor(secs / _AGE_STEPS[i][1]);
+    if (n >= 1) return n + _AGE_STEPS[i][0];
+  }
+  return t('just_now');
 }
 
 function renderCardGrid(items, showStars, showCategory) {
