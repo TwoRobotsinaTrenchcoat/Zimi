@@ -3965,33 +3965,47 @@ function _sortedByDateHtml(z) {
   var by = _librarySort();
   var ts = by === 'added' ? z.first_seen : by === 'updated' ? z.updated_at : null;
   if (!ts) return '';
-  var when = _prettyDate(ts);
-  if (!when) return '';
-  // Which date this is, not just a date. Two orders put a date on the card and
-  // they mean opposite things — the day a ZIM arrived and the day its contents
-  // changed — so a bare date is a number you have to remember the context of
-  // (Eric: "should say the context like updated <date> or added").
+  var age = _shortAge(ts);
+  if (!age) return '';
+  // Small on the line, and the context on the timestamp behind it. The detail
+  // line already carries a count and a size; a third fact spelled out pushed it
+  // onto two rows on a phone and was more than the glance needed. What the
+  // date MEANS still has to be said somewhere, because the two orders mean
+  // opposite things — the day a ZIM arrived and the day its contents changed —
+  // so the tooltip says it in full.
   return '<span class="card-when" title="' +
-    escAttr(new Date(ts * 1000).toLocaleString(_currentLang || 'en')) + '"> &middot; ' +
-    tH(by === 'added' ? 'card_added_on' : 'card_updated_on', { date: esc(when) }) +
-    '</span>';
+    escAttr(_fullWhen(by, ts)) + '"> &middot; ' + esc(age) + '</span>';
 }
 
-// A date a person reads rather than counts: "12 Sep", and the year too once it
-// stops being obvious. Written out beats an elapsed time here — "21 hours ago"
-// pushed the detail line onto two rows on a phone, and a date is both shorter
-// and the thing you are actually sorting by. The exact moment stays a tooltip.
-function _prettyDate(tsSec) {
-  if (!tsSec) return '';
+// The whole answer, for the tooltip: which date this is and when, spelled out.
+function _fullWhen(by, tsSec) {
   var d = new Date(tsSec * 1000);
-  if (isNaN(d.getTime())) return '';
-  var opts = { day: 'numeric', month: 'short' };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  var when;
   try {
-    return d.toLocaleDateString(_currentLang || 'en', opts);
+    when = d.toLocaleString(_currentLang || 'en', {
+      day: 'numeric', month: 'long', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
   } catch (e) {
-    return d.toISOString().slice(0, 10);
+    when = d.toISOString();
   }
+  return t(by === 'added' ? 'card_added_on' : 'card_updated_on', { date: when });
+}
+
+// How long ago, in the fewest characters that still answer it. The question a
+// sorted list asks is "how recent", never "exactly when" — that is what the
+// tooltip is for. Units stop at the largest that fits in two characters.
+var _AGE_STEPS = [
+  ['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60],
+];
+function _shortAge(tsSec) {
+  if (!tsSec) return '';
+  var secs = Math.max(0, Math.round(Date.now() / 1000 - tsSec));
+  for (var i = 0; i < _AGE_STEPS.length; i++) {
+    var n = Math.floor(secs / _AGE_STEPS[i][1]);
+    if (n >= 1) return n + _AGE_STEPS[i][0];
+  }
+  return t('just_now');
 }
 
 function renderCardGrid(items, showStars, showCategory) {

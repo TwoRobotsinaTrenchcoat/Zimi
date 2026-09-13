@@ -96,11 +96,10 @@ Object.assign(sandbox, {
   esc: (v) => String(v),
   escAttr: (v) => String(v),
 });
-sandbox.t = (k) => k;
-// tH interpolates {date}; the real one also escapes, which esc() already did.
-sandbox.tH = (k, vars) =>
-  String(k).replace(/$/, '') + (vars && vars.date ? ':' + vars.date : '');
-vm.runInContext(grab('_prettyDate'), sandbox);
+sandbox.t = (k, vars) => k + (vars && vars.date ? ':' + vars.date : '');
+vm.runInContext(grab('_fullWhen'), sandbox);
+vm.runInContext(grab('_AGE_STEPS', 'var'), sandbox);
+vm.runInContext(grab('_shortAge'), sandbox);
 vm.runInContext(grab('_sortedByDateHtml'), sandbox);
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -113,29 +112,30 @@ const shown = (mode) => {
 check(shown('alpha') === '', 'alphabetical shows no date — it is not a date order');
 check(shown('entries') === '', 'article count shows no date either');
 
+// Small on the line, and the whole answer on the timestamp behind it.
 const added = shown('added');
-check(added.includes('card-when') && added.includes('card_added_on:'),
-      'recently added says it was ADDED, with the date: ' + added.slice(-40));
+check(/>\s*&middot;\s*1h</.test(added),
+      'the line carries a short age and nothing more: ' + added.slice(-30));
+check(added.includes('title="card_added_on:'),
+      'and the tooltip says which date it is: ' + added.slice(0, 46));
 const updated = shown('updated');
-check(updated.includes('card_updated_on:'),
-      'recently updated says it was UPDATED: ' + updated.slice(-40));
-check(!added.includes('card_updated_on'), 'and the two never say the same thing');
+check(updated.includes('title="card_updated_on:'),
+      'recently updated says UPDATED in its tooltip');
+check(!updated.includes('card_added_on'), 'and the two never say the same thing');
 
 // Short enough to sit on a line that already holds a count and a size. The
 // long form pushed that line onto two rows on a phone.
-// A date a person reads, short enough to share a line with a count and a size.
-const thisYear = new Date();
-const sameYear = vm.runInContext(
-  '_prettyDate(' + Math.floor(thisYear.getTime() / 1000 - 86400) + ')', sandbox);
-check(!/\d{4}/.test(sameYear), 'a date this year does not repeat the year: ' + sameYear);
-check(sameYear.length <= 12, 'and it is short: ' + sameYear);
-
-const old2 = new Date(thisYear.getFullYear() - 3, 4, 9);
-const older = vm.runInContext('_prettyDate(' + Math.floor(old2.getTime() / 1000) + ')', sandbox);
-check(String(older).indexOf(String(thisYear.getFullYear() - 3)) >= 0,
-      'a date from another year carries it: ' + older);
-
-check(vm.runInContext('_prettyDate(0)', sandbox) === '', 'no stamp, no date');
+// The age is the small half. Two characters and a unit, so it can sit at the
+// end of a line that already holds a count and a size.
+const ages = [[90, '1m'], [3600, '1h'], [172800, '2d'], [3456000, '1mo'], [34560000, '1y']];
+for (const [secs, want] of ages) {
+  const got = vm.runInContext('_shortAge(' + (NOW - secs) + ')', sandbox);
+  check(got === want, secs + 's ago reads as ' + want + ' (got ' + got + ')');
+  check(String(got).length <= 4, got + ' is short enough for the detail line');
+}
+check(vm.runInContext('_shortAge(' + (NOW - 5) + ')', sandbox) === 'just_now',
+      'under a minute says so in words rather than "0m"');
+check(vm.runInContext('_shortAge(0)', sandbox) === '', 'no stamp, no age');
 
 // Every library has some ZIM with no stamp. It must render nothing rather than
 // "Invalid Date" or a dangling separator.
