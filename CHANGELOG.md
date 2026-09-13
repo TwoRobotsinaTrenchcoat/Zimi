@@ -9,38 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **A capture keeps both of a site's faces.** A site with a dark mode serves a different page depending on your theme; a capture could only keep one, so reading in dark opened a captured site in light. Both are stored, and the reader shows the one matching your theme. Sites that ignore `prefers-color-scheme` and keep their own switch are covered too — Zimi looks for a control the page labels as a theme switch and presses it. Which face is which is measured from what the page paints.
-- **A capture's ZIM carries what only the capture knew.** The alive and zimit engines hand a WARC to warc2zim, which accepts nine flags, so everything else was dropped at that door. The file is rewritten once at creation to add which entries are pages, the source URL, the two pictures, and a capture record under `X-Zimi-Capture`. Standard fields used as the spec intends plus `X-` metadata, so the ZIM opens anywhere — and Kiwix gets a better file, since its own random and suggestions read the same page flag.
-- **The library orders the way you ask, and defaults to alphabetical (#67).** Alphabetical, Recently added, Recently updated, Most articles — one control, applying to every shelf including Favorites and collections. Sort by a date and each card shows how long ago, with the full date and what it means on hover.
-- **A control that will not change says why.** Update frequency when `ZIMI_AUTO_UPDATE` is set (#69), BitTorrent when libtorrent is missing (#70). Both reasons were in a tooltip or the log.
-- **Random article works on a capture**, which restores the Discover card and the agent API's random tool.
+- Captures keep a site's light and dark faces, and open the one matching your theme.
+- Captures made with the alive and zimit engines now carry their page list, source URL, pictures and creation record — in standard fields, so other readers benefit too.
+- Sort the library alphabetically, by date added, by date updated or by article count (#67).
+- Controls that cannot change say why: update frequency when the environment sets it (#69), BitTorrent when libtorrent is missing (#70).
+- Random article works on a captured site, which also restores its Discover card.
 
 ### Fixed
 
-- **draculatheme.com works from a ZIM (#64).** warc2zim stores script references relative, so `/_next/app.js` becomes `_next/app.js`. Turbopack identifies a chunk by `script.getAttribute("src")` and strips a leading `/_next/`; with the slash gone every chunk registered under a name nothing waited for. 191 module factories run on the live site and none in the ZIM. Fixed upstream in [python-scraperlib#337](https://github.com/openzim/python-scraperlib/pull/337); Zimi ships a shim until that releases.
-- **Darken articles works in both directions on a normal ZIM (#65).** It only ever *added* darkening, so on a page with its own dark mode — every modern Wikipedia ZIM — ticking had nothing to add and unticking nothing to remove.
-- **Manage → Creator's "Made here" list never finished loading.** The pane builds itself as a string and asks for the inventory part way through; when the answer was already in hand it filled the slot immediately — into the DOM the pane was about to replace — and the half-built string, still carrying the "Loading…" placeholder, landed on top. It happened precisely when the answer arrived fastest.
-
-- **Every PDF opened through the reader was blank (#71).** The passes that tidy a captured page ran on Zimi's own pdf.js viewer, and at that instant its container is an empty box with no canvas yet — indistinguishable from an abandoned ad slot. It was collapsed to nothing. Reported by Joe (WB3IHY) with the cause and the fix.
-- **A capture's own picture no longer libels it.** The packaged page was photographed before the fix above went in, so the picture showed the very defect it repairs — and then warned that "something did not survive capture" about a file that renders perfectly. A replayed page is also given time to boot: hydration is CPU work, so "the network went quiet" arrived while the page was still a shell.
-- **A cancelled capture stops the browser it started.** Both streaming runners collected the child only when the command finished normally, and the progress sink raises on cancel by design. A NAS accumulated twenty zombies in twenty-one hours; behind each was a browser still reading from disk for a capture already discarded.
-- **One unusable reference can no longer end a capture.** nerdfonts.com asks for a font whose filename contains spaces. Browsers encode those; Python refuses, and the refusal escaped the asset reader and took the whole run with it.
-- **The engine offered for an application is no longer the one that breaks it.** The recommendation asked whether the document arrived empty, which misses a server-rendered app entirely. It now also looks for a framework runtime, and the preview says which kind of page it found.
-- **A capture with the alive or zimit engine keeps its two pictures.** 1.9.2 shipped the feature without them, leaving the engine most likely to produce a doubtful capture as the one that could not show you.
-- **One capture no longer degrades the library's search suggestions.** The title index took every entry, so a two-page site contributed 816 rows of asset URLs and searching "coma" was corrected to "com". It indexes pages now: 816 rows became 1.
-- **The Create page answers before you press the button.** The address was only examined when the field lost focus, so pasting one and pressing Create started the job without it ever being looked at — and that look picks the engine. A finished run also leaves the form empty for the next one.
-- **Two things that looked broken and were only drawn wrong.** The step rail on a running capture ran through the middle of each dot rather than between them, and the Discover strip's scrollbar was a short line under the cards reading as an artefact.
-
-- **A place in its own timezone is a place.** The world clock is a tour of 28 cities; somewhere sharing an offset with none of them lit nothing at all. Eucla, at UTC+8:45, now gets a card of its own, inserted where its clock belongs.
+- JavaScript sites work from a ZIM — draculatheme.com's theme switch and colour tabs included (#64).
+- Darken articles works on every ZIM, in both directions (#65).
+- PDFs open in the reader again (#71). Reported by Joe (WB3IHY).
+- "Made here" in Manage → Creator finishes loading.
+- A capture's before-and-after pictures compare the right two things.
+- Cancelling a capture stops the browser it started.
+- A filename with spaces no longer ends a capture.
+- The engine suggested for a JavaScript app is one that can capture it, and the preview says what kind of page it found.
+- Alive and zimit captures keep their two pictures.
+- One captured site no longer spoils search suggestions across the whole library.
+- Create starts the job you asked for even if you never leave the address field, and empties the form when it finishes.
+- Places on unusual clocks show their time — Eucla, the Chathams, the Marquesas.
+- The step rail on a running capture, and the Discover strip, stop drawing stray lines.
 
 ### Faster
 
-- **A library re-render stops costing a disk read per source.** A ZIM's icon was sent with a validator over its own bytes and no freshness window, so the browser asked about every icon on every render and each ask opened the archive under the lock every search needs. On 74 sources across four page loads and six view toggles: 74 archive reads in total, all on the first paint, none after.
-- **Changing the order moves the cards instead of rebuilding them.** Sorting changes only the sequence, but the whole shelf was thrown away and made again — the flash, and every icon re-fetched. Honours `prefers-reduced-motion`.
-- **Discover stops holding the library up while it picks.** `/random` took the global lock once and held it across up to fifty attempts per card, running all of them even when the first pick was good. One acquisition per attempt now, judged as each arrives.
-- **Manage → Creator opens in 21ms instead of four seconds.** Finding out whether the rendered engine works means launching a browser; that is off the request thread now. And "which ZIMs did Zimi make" opened every archive in the library and forgot the answer on exit — it is remembered on disk and warmed at startup.
-- **Background jobs stopped erasing each other's work.** Five things read the metadata cache, change part of it and write the whole thing back, on different threads. Whichever saved second built on a stale copy. A lost shape means the file is measured again, and measuring walks every entry in it — on a large library, the machine grinding every quarter of an hour, for ever.
-- **The picture of the page being captured arrives at the start on every engine.** The fast engine took it at packaging time, so the engine most likely to be picked for a quick capture showed nothing while it worked.
+- The library redraws without re-reading every icon from disk.
+- Changing the sort order slides the cards instead of rebuilding them.
+- Discover no longer holds up the rest of the app while it fills.
+- Manage → Creator opens at once instead of after several seconds.
+- Background jobs stopped undoing each other's work, which had the disk measuring the same files over and over.
+- The picture of the page being captured appears within seconds, on every engine.
 
 ## [1.9.2] - 2026-09-07
 
