@@ -885,6 +885,51 @@ def _zim_list_entry(name):
     return None
 
 
+def _random_pick_verdict(
+    result, preview, *, is_gutenberg, is_wiktionary, is_wikiquote, require_thumb
+):
+    """Whether a random pick is the one to serve.
+
+    ``"accept"`` means stop looking. ``"fallback"`` means it will do if nothing
+    better turns up, which is what makes the dice always land on something.
+
+    Its own function because the judging happens OUTSIDE the libzim lock while
+    the reading happens inside it, and because each source wants a different
+    thing: a Gutenberg cover page rather than chapter nine, a Wiktionary entry
+    that is English and not a bare inflection, a Wikiquote page that actually
+    carries a quote, and for the Discover strip, anything with a picture."""
+    # A Gutenberg pick that is not the cover is only ever a fallback. One that
+    # IS the cover still has to satisfy whatever else was asked for, so it
+    # falls through rather than being accepted here.
+    if is_gutenberg and "_cover" not in (result.get("path") or ""):
+        return "fallback"
+    if is_wiktionary and preview:
+        boring = preview.get("non_english") or preview.get("boring")
+        return "fallback" if boring else "accept"
+    if is_wikiquote and preview:
+        blurb = preview.get("blurb") or ""
+        return "accept" if (blurb and blurb[0] in ("\u201c", '"')) else "fallback"
+    if not require_thumb or (preview and preview["thumbnail"]):
+        return "accept"
+    return "fallback"
+
+
+# Bookkeeping the server keeps on a library entry and no client has any use
+# for. It rides on the same dict as the facts, because that dict IS the cache —
+# but /list is the payload the home screen waits on, and on a 74-ZIM library
+# these two were 19% of it (9 KB of 47 KB): a copy of the provenance record
+# that /zim-info?kinds=1 already serves on purpose, and an mtime that
+# first_seen and updated_at already answer for.
+_PRIVATE_ZIM_FIELDS = ("zimi_kind", "mtime")
+
+
+def _public_zim_entry(entry):
+    """One library entry as a client should see it."""
+    if not any(k in entry for k in _PRIVATE_ZIM_FIELDS):
+        return entry
+    return {k: v for k, v in entry.items() if k not in _PRIVATE_ZIM_FIELDS}
+
+
 def _zim_file_sig(entry):
     """The file identity a memoized provenance record is valid for."""
     return (entry or {}).get("file", ""), (entry or {}).get("size_bytes", 0)
@@ -1023,20 +1068,57 @@ def _zim_metadata_for(name):
             return {}, False
 
 
+# Provenance answers found this pass that the disk cache has not got yet.
+# Written once, by the walk that fills it, rather than once per ZIM: a cold
+# library would otherwise rewrite the cache file seventy-three times.
+_zim_kind_pending = {}
+
+
 def _zim_kind_for(entry):
     """Memoized provenance facts for one list entry. Reads the archive at most
-    once per file identity per process."""
+    once per file identity per process, and — once the disk cache has it — at
+    most once per file identity ever."""
     name = entry.get("name")
     sig = _zim_file_sig(entry)
     with _zim_kind_lock:
         memo = _zim_kind_memo.get(name)
     if memo and memo[0] == sig:
         return memo[1]
+    # The cache outlives the process; the memo does not. `kind` is legitimately
+    # None for a ZIM somebody else published, which is most of them, so the
+    # record wraps it — an absent record means "never looked", not "not ours".
+    stored = entry.get("zimi_kind")
+    if isinstance(stored, dict) and stored.get("sig") == list(sig):
+        kind = stored.get("kind")
+        with _zim_kind_lock:
+            _zim_kind_memo[name] = (sig, kind)
+        return kind
     meta, readable = _zim_metadata_for(name)
     kind = _zimi_kind(meta) if readable else None
     with _zim_kind_lock:
         _zim_kind_memo[name] = (sig, kind)
+        _zim_kind_pending[name] = {
+            "file": entry.get("file", ""),
+            "sig": list(sig),
+            "kind": kind,
+        }
     return kind
+
+
+def flush_zim_kinds():
+    """Write what this pass learned into the cache that survives a restart.
+
+    Called by the walks, after they have walked. Never raises: provenance is a
+    badge and a breakdown, and neither is worth failing a page over."""
+    with _zim_kind_lock:
+        if not _zim_kind_pending:
+            return
+        records = dict(_zim_kind_pending)
+        _zim_kind_pending.clear()
+    try:
+        _srv.kind_store(records)
+    except Exception as e:
+        log.debug("could not remember provenance for %d ZIMs: %s", len(records), e)
 
 
 def _zim_kinds():
@@ -1050,12 +1132,66 @@ def _zim_kinds():
         kind = _zim_kind_for(entry)
         if kind:
             kinds[entry["name"]] = kind
+    flush_zim_kinds()
     elapsed = time.time() - t0
     # Only the cold pass costs anything (every later one is memoized), and on a
     # large library that pass is worth a line in the log.
     if elapsed > 1:
         log.info("provenance scan: %d ZIMs in %.1fs", len(entries), elapsed)
     return kinds
+
+
+def _faces_summary(meta):
+    """The site's two faces, when the capture kept both, or None.
+
+    A site with a media-query dark mode serves a different page to a reader who
+    prefers dark. The capture keeps both and this says which entry is which, so
+    the reader can open the one that matches the theme in front of the person.
+    """
+    import json as _json
+
+    from zimi import creator as _creator
+
+    raw = meta.get(_creator.FACES_METADATA_KEY) or ""
+    if not raw:
+        return None
+    try:
+        faces = _json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(faces, dict):
+        return None
+    other = faces.get("other")
+    if not isinstance(other, dict) or not other.get("path") or not other.get("scheme"):
+        return None
+    return {"main": faces.get("main", ""), "other": other}
+
+
+def _capture_summary(meta):
+    """What a capture recorded about itself, or None.
+
+    The record is the only place the truth about a warc2zim-written ZIM lives:
+    the converter reports two "articles" for a whole site, one of which can be
+    a third-party widget it happened to store as HTML."""
+    import json as _json
+
+    from zimi import zimpatch as _zimpatch
+
+    raw = meta.get(_zimpatch.CAPTURE_METADATA_KEY) or ""
+    if not raw:
+        return None
+    try:
+        record = _json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(record, dict):
+        return None
+    return {
+        "engine": record.get("engine", ""),
+        "captured": record.get("captured", ""),
+        "assets": record.get("assets", 0),
+        "pages": len(record.get("pages") or []),
+    }
 
 
 def _zim_info(name):
@@ -1123,6 +1259,8 @@ def _zim_info(name):
         "tags": _split_tags(meta.get("Tags")),
         "history": history,
         "kind": _zimi_kind(meta),
+        "capture": _capture_summary(meta),
+        "faces": _faces_summary(meta),
         "readable": readable,
     }
     if entry.get("article_count") is not None:
@@ -1859,6 +1997,7 @@ class ZimHandler(BaseHTTPRequestHandler):
                         {**z, "category": overrides.get(z["name"], z.get("category"))}
                         for z in result
                     ]
+                result = [_public_zim_entry(z) for z in result]
                 # Additive envelope: ?layout=1 carries the top-level section_order
                 # alongside the ZIMs. The bare array shape stays the default so
                 # existing API consumers are unaffected.
@@ -2119,7 +2258,8 @@ class ZimHandler(BaseHTTPRequestHandler):
                 date_param = param("date")  # MMDD format
                 seed_param = param("seed")  # For deterministic daily picks
                 t0 = time.time()
-                candidates = []
+                best_result = None
+                best_preview = None
                 archive = None
                 pick_name = pick_names[0]
                 is_wiktionary = is_gutenberg = is_wikiquote = False
@@ -2154,10 +2294,25 @@ class ZimHandler(BaseHTTPRequestHandler):
                             16,
                         )
                         rng = _random.Random(seed_val)
-                    # Batch all ZIM reads under a single lock acquisition
-                    candidates = []
-                    with _srv._zim_lock:
-                        for _try in range(max_tries):
+                    # ONE attempt per lock acquisition, and stop as soon as a
+                    # pick is good enough.
+                    #
+                    # This used to hold _zim_lock across the whole loop and run
+                    # every attempt regardless — so a Wiktionary card read 50
+                    # random articles, extracted 50 previews, and held the
+                    # global libzim lock for all of it, even when the first pick
+                    # was perfect. The lock is the one every search and every
+                    # article read needs, and Discover fires one of these per
+                    # card in parallel, which is why the whole site stopped
+                    # while the strip filled in (Eric, 2026-09-11: "the whole
+                    # site is held up while it's loading the discover stuff").
+                    #
+                    # libzim needs the lock around each READ, not across a
+                    # sequence of them; holding it for the sequence was a
+                    # throughput trade that cost fairness. Judging each pick as
+                    # it arrives also means the usual case reads once.
+                    for _try in range(max_tries):
+                        with _srv._zim_lock:
                             result = None
                             if date_param and len(date_param) == 4 and _try == 0:
                                 result = _srv._get_dated_entry(
@@ -2165,64 +2320,32 @@ class ZimHandler(BaseHTTPRequestHandler):
                                 )
                             if not result:
                                 result = _srv.random_entry(archive, rng=rng)
-                            if not result:
-                                continue
                             preview = None
-                            if want_thumb:
+                            if result and want_thumb:
                                 preview = _srv._extract_preview(
                                     archive, pick_name, result["path"]
                                 )
-                            candidates.append((result, preview))
-                    if candidates:
-                        break
-                # Filter candidates outside the lock
-                best_result = None
-                best_preview = None
-                for result, preview in candidates:
-                    # Gutenberg: prefer cover pages
-                    if is_gutenberg and "_cover" not in result.get("path", ""):
-                        if best_result is None:
-                            best_result = result
-                            best_preview = preview
-                        continue
-                    # Skip non-English or boring wiktionary entries
-                    if (
-                        is_wiktionary
-                        and preview
-                        and (preview.get("non_english") or preview.get("boring"))
-                    ):
-                        if best_result is None:
-                            best_result = result
-                            best_preview = preview
-                        continue
-                    # Wiktionary: accept interesting English entry
-                    if (
-                        is_wiktionary
-                        and preview
-                        and not preview.get("non_english")
-                        and not preview.get("boring")
-                    ):
-                        best_result = result
-                        best_preview = preview
-                        break
-                    # Wikiquote: require an actual quote
-                    if is_wikiquote and preview:
-                        blurb = preview.get("blurb") or ""
-                        if blurb and blurb[0] in ("\u201c", '"'):
+                        if not result:
+                            continue
+                        if (
+                            _random_pick_verdict(
+                                result,
+                                preview,
+                                is_gutenberg=is_gutenberg,
+                                is_wiktionary=is_wiktionary,
+                                is_wikiquote=is_wikiquote,
+                                require_thumb=require_thumb,
+                            )
+                            == "accept"
+                        ):
                             best_result = result
                             best_preview = preview
                             break
                         if best_result is None:
                             best_result = result
                             best_preview = preview
-                        continue
-                    if not require_thumb or (preview and preview["thumbnail"]):
-                        best_result = result
-                        best_preview = preview
+                    if best_result is not None:
                         break
-                    if best_result is None:
-                        best_result = result
-                        best_preview = preview
                 if not best_result:
                     return self._json(200, {"error": "no articles found"})
                 dt = time.time() - t0
@@ -2572,7 +2695,46 @@ class ZimHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._dispatch_error(e)
 
-    def _serve_zim_metadata_image(self, zim_name, archive, key):
+    # The three pictures a ZIM serves out of its metadata, and how long a
+    # browser may reuse one without asking again.
+    #
+    # These used to be `max-age=0, must-revalidate` with an ETag over the
+    # CONTENT, which is correct and ruinously expensive: every render of the
+    # library asked about every icon, and answering the ask meant opening the
+    # archive and hashing the illustration — under the global libzim lock, which
+    # is the same lock every search and every article read needs. Seventy-four
+    # sources on the home screen is seventy-four locked reads, on every sort,
+    # every view toggle, every time the page came back. Eric, 2026-09-11: "icons
+    # disappear and redownload when i toggle compact or full", and "the whole
+    # site is held up".
+    #
+    # So the tag is the FILE's identity rather than a digest of its bytes —
+    # replacing a ZIM or re-capturing over the same name changes the mtime and
+    # almost always the size — and it is computed from the list cache, so a
+    # revalidation is answered before the lock is taken. The short freshness
+    # window means a re-render does not ask at all. It is the reason this is
+    # not `immutable`: a ZIM's bytes CAN change at the same URL, and a week of
+    # the wrong picture is what the previous version of this cost.
+    PICTURE_PATHS = ("-/icon", "-/shot-live", "-/shot-zim")
+    PICTURE_MAX_AGE = 30
+
+    def _picture_etag(self, zim_name, entry_path):
+        """The tag for a metadata picture, or "" when the file is unknown."""
+        sig = _srv.zim_signature(zim_name)
+        if not sig:
+            return ""
+        return '"%s-%s-%s"' % (entry_path.rsplit("/", 1)[-1], int(sig[0]), sig[1])
+
+    def _picture_not_modified(self, etag):
+        self.send_response(304)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", self._picture_cache_control())
+        self.end_headers()
+
+    def _picture_cache_control(self):
+        return "public, max-age=%d, must-revalidate" % self.PICTURE_MAX_AGE
+
+    def _serve_zim_metadata_image(self, zim_name, archive, key, entry_path):
         """Serve a JPEG held under a metadata key.
 
         The same contract the illustration gets, and for the same reason: the
@@ -2595,18 +2757,16 @@ class ZimHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        etag = '"shot-%s"' % hashlib.sha256(data).hexdigest()[:16]
+        etag = self._picture_etag(zim_name, entry_path) or (
+            '"shot-%s"' % hashlib.sha256(data).hexdigest()[:16]
+        )
         if self.headers.get("If-None-Match") == etag:
-            self.send_response(304)
-            self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
-            self.end_headers()
-            return
+            return self._picture_not_modified(etag)
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("ETag", etag)
-        self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        self.send_header("Cache-Control", self._picture_cache_control())
         self.end_headers()
         self.wfile.write(data)
 
@@ -2651,20 +2811,14 @@ class ZimHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        etag = '"icon-%s"' % hashlib.sha256(icon_data).hexdigest()[:16]
+        etag = self._picture_etag(zim_name, "-/icon") or (
+            '"icon-%s"' % hashlib.sha256(icon_data).hexdigest()[:16]
+        )
         if self.headers.get("If-None-Match") == etag:
-            self.send_response(304)
-            self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
-            self.end_headers()
-            return
+            return self._picture_not_modified(etag)
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
-        # max-age=0 + must-revalidate: reuse the cached bytes, but ask first.
-        # The ask is an ETag comparison the server answers with a 304, which is
-        # what makes this correct AND cheap — a page full of source tiles costs
-        # a handful of empty replies rather than a handful of images.
-        self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+        self.send_header("Cache-Control", self._picture_cache_control())
         self.send_header("ETag", etag)
         self.send_header("Content-Length", str(len(icon_data)))
         self.end_headers()
@@ -2795,6 +2949,15 @@ class ZimHandler(BaseHTTPRequestHandler):
         <html lang> from the ZIM's language metadata. Activated via the
         ?a11y=1 query parameter on /w/ URLs.
         """
+        # Before the lock: a picture whose file has not changed is answered
+        # from the browser's own copy, without opening the archive at all. This
+        # is the difference between a library re-render costing one empty reply
+        # per source and costing one locked archive read per source.
+        if entry_path in self.PICTURE_PATHS:
+            etag = self._picture_etag(zim_name, entry_path)
+            if etag and self.headers.get("If-None-Match") == etag:
+                return self._picture_not_modified(etag)
+
         # Phase 1: Read from ZIM under lock
         with _srv._zim_lock:
             archive = _srv.get_archive(zim_name)
@@ -2822,7 +2985,9 @@ class ZimHandler(BaseHTTPRequestHandler):
                     if entry_path == "-/shot-live"
                     else _zw.SHOT_ZIM_METADATA_KEY
                 )
-                return self._serve_zim_metadata_image(zim_name, archive, key)
+                return self._serve_zim_metadata_image(
+                    zim_name, archive, key, entry_path
+                )
 
             try:
                 entry = archive.get_entry_by_path(entry_path)

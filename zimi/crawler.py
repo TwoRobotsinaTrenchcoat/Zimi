@@ -91,7 +91,9 @@ from zimi.creator import (
     scratch_dir,
     site_illustration,
     spool_target,
+    looks_like_app,
 )
+from zimi import subproc
 from zimi.blocklist import blocked_phrase
 from zimi.zimwriter import (
     guess_mime,
@@ -214,7 +216,9 @@ def upgrade_scheme(url, origin):
         and u.port in (None, 80)
         and o.port in (None, 443)
     ):
-        return urllib.parse.urlunsplit(("https", u.hostname.lower(), u.path, u.query, u.fragment))
+        return urllib.parse.urlunsplit(
+            ("https", u.hostname.lower(), u.path, u.query, u.fragment)
+        )
     return url
 
 
@@ -982,6 +986,7 @@ def probe_site(url, *, ignore_robots=False, timeout=PROBE_TIMEOUT):
         "language": language,
         "language_source": language_source,
         "spa": looks_like_spa(seed_text),
+        "app": looks_like_app(seed_text),
         "robots": verdict,
         "crawl_delay": _robots_delay(robots, 0.0, _noop) or None,
         "fetched": fetched,
@@ -1021,7 +1026,7 @@ def _run_streaming(cmd, note, timeout=None):
     browser crawl can emit megabytes and the useful part is the end."""
     tail = deque(maxlen=40)
     try:
-        proc = subprocess.Popen(
+        proc = subproc.popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1036,12 +1041,19 @@ def _run_streaming(cmd, note, timeout=None):
             tail.append(line)
             note("  " + line)
         proc.wait(timeout=timeout)
-    except KeyboardInterrupt:
-        proc.terminate()
-        raise
+    except subprocess.TimeoutExpired:
+        # Named rather than left to travel as itself: a bare TimeoutExpired
+        # from deep inside a crawl reads as a Zimi bug in the run pane, and the
+        # engines all speak CreateError.
+        raise CreateError(f"{cmd[0]} ran past its {timeout:g}s limit and was stopped")
     finally:
-        if proc.stdout is not None:
-            proc.stdout.close()
+        # Every exit, not three of them. This used to catch KeyboardInterrupt
+        # and terminate() without waiting — a zombie — while an overrun
+        # wait(timeout=) raised TimeoutExpired that nobody caught, and an
+        # exception out of note() (the cancellation checkpoint, which raises by
+        # design) left the container running untouched. All three leave a
+        # browser reading from disk for a crawl that has already stopped.
+        subproc.stop(proc)
     return proc.returncode, list(tail)
 
 

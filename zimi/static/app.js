@@ -23,6 +23,11 @@ var SK = {
   LIBRARY_TAB: 'zimi_library_tab',
   // Home library layout: 'list' (default full cards) | 'tiles' (compact grid).
   LIBRARY_VIEW: 'zimi_library_view',
+  // How the home screen orders the ZIMs inside a category. Alphabetical by
+  // default (#67): it matches Settings > Library, and it is the order you can
+  // predict when you are looking for a title you already know. Article count
+  // was the old default and rewards big files rather than the one you want.
+  LIBRARY_SORT: 'zimi_library_sort',
   BROWSE_HISTORY: 'zimi_browse_history',
   BOOKMARKS: 'zimi_bookmarks',
   // Bookmark folders (v2) — array of {id,name,parent,order}. Root is implicit
@@ -172,14 +177,30 @@ function _darkenArticlesOn() {
 function _darkenArticlesExplicit() {
   return localStorage.getItem(SK.DARKEN_ARTICLES) === '1';
 }
-// The decision, pure so it can be tested: should the darken style be in the
-// article document right now?
+// The decision, pure so it can be tested. Three answers, not two, because the
+// box has to work in BOTH directions (#65).
+//
+//   'darken'  inject the darkening style: a light page the person wants dark
+//   'light'   ask the page for its light face: unticked, and the page has a
+//             dark one it is showing because the browser prefers dark
+//   'leave'   touch nothing
+//
+// The two-answer version was the bug. It only ever ADDED darkening to a light
+// page, so on a page carrying its own dark mode — every modern Wikipedia ZIM
+// follows the OS through `skin-theme-clientpref-os` — ticking did nothing
+// (already dark) and unticking did nothing (we only ever add). To someone
+// reading in dark mode that is a checkbox with no function, which is exactly
+// what was reported.
 function _darkenWanted(on, explicit, readerViewOn, loc, isCapture, declaresDark) {
-  if (!on || readerViewOn) return false;
-  if ((loc || '').indexOf('/static/') === 0) return false;   // pdf.js / viewers
-  if (declaresDark) return false;                            // already dark
-  if (isCapture && !explicit) return false;                  // keeps its design
-  return true;
+  return _articleAppearance(on, explicit, readerViewOn, loc, isCapture, declaresDark) === 'darken';
+}
+function _articleAppearance(on, explicit, readerViewOn, loc, isCapture, declaresDark) {
+  if (readerViewOn) return 'leave';                          // owns its themes
+  if ((loc || '').indexOf('/static/') === 0) return 'leave';  // pdf.js / viewers
+  if (!on) return declaresDark ? 'light' : 'leave';
+  if (isCapture && !explicit) return 'leave';                // keeps its design
+  if (declaresDark) return 'leave';                          // already dark
+  return 'darken';
 }
 function _setDarkenArticles(on) {
   localStorage.setItem(SK.DARKEN_ARTICLES, on ? '1' : '0');
@@ -294,6 +315,25 @@ function _markStylesheetPictures(doc) {
 // light mode had passed them. The invert is for wiki-style article ZIMs whose
 // pages have no design of their own. Created ZIMs and bookmark exports keep
 // their colours; the app chrome around them stays dark.
+// A capture may hold both of the site's faces. Open the one that matches the
+// theme the person is reading in, so a captured site behaves the way the live
+// one did rather than always showing whichever face the capture was taken in.
+function _facePathFor(zimName, path) {
+  try {
+    var info = _zimInfo(zimName);
+    var faces = info && info.faces;
+    if (!faces || !faces.other || !faces.other.path) return path;
+    // Only the entry the ZIM opens on has a counterpart; a link deeper into
+    // the capture is left exactly as it was asked for.
+    var main = info.main_path || 'A/index';
+    if (path !== main) return path;
+    var wantDark = _appThemeIsDark();
+    var want = wantDark ? 'dark' : 'light';
+    if (faces.other.scheme === want) return faces.other.path;
+    return path;
+  } catch (e) { return path; }
+}
+
 function _articleIsWebCapture() {
   try {
     var z = currentArticle && _zimsByName && _zimsByName.get(currentArticle.zim);
@@ -305,11 +345,11 @@ function _applyArticleDarken(doc) {
   var existing = doc.getElementById(_ARTICLE_DARKEN_STYLE_ID);
   var loc = '';
   try { loc = doc.defaultView.location.pathname; } catch (e) {}
-  var want = _darkenWanted(
+  var want = _articleAppearance(
     _darkenArticlesOn(), _darkenArticlesExplicit(), _readerViewOn, loc,
     _articleIsWebCapture(), _articleDeclaresDark(doc)
   );
-  if (want) {
+  if (want === 'darken') {
     if (!existing && doc.head) {
       var st = doc.createElement('style');
       st.id = _ARTICLE_DARKEN_STYLE_ID;
@@ -320,6 +360,35 @@ function _applyArticleDarken(doc) {
   } else if (existing && existing.parentNode) {
     existing.parentNode.removeChild(existing);
   }
+  _askArticleFor(doc, want === 'light' ? 'light' : '');
+}
+
+// Ask the page itself for a light face, using the two knobs a page can carry.
+// Passing '' hands it back whatever it chooses on its own.
+//
+// `color-scheme` is the standard one: it decides how `prefers-color-scheme`
+// resolves inside this document, so a page whose dark mode is a media query
+// simply stops matching it. MediaWiki does not use a media query — Vector 2022
+// stamps `skin-theme-clientpref-os` on <html> and its own CSS reads that class
+// — so the class is swapped too. That covers every Wikipedia-family ZIM, which
+// is most of a typical library.
+var _MW_THEME_RE = /\bskin-theme-clientpref-\S+/;
+function _askArticleFor(doc, mode) {
+  try {
+    var html = doc.documentElement;
+    html.style.colorScheme = mode || '';
+    if (_MW_THEME_RE.test(html.className)) {
+      if (mode === 'light') {
+        if (!html.dataset.zimiMwTheme) {
+          html.dataset.zimiMwTheme = html.className.match(_MW_THEME_RE)[0];
+        }
+        html.className = html.className.replace(_MW_THEME_RE, 'skin-theme-clientpref-day');
+      } else if (html.dataset.zimiMwTheme) {
+        html.className = html.className.replace(_MW_THEME_RE, html.dataset.zimiMwTheme);
+        delete html.dataset.zimiMwTheme;
+      }
+    }
+  } catch (e) {}
 }
 
 // Shared "dismiss on outside interaction" for menus/popovers. Registers a
@@ -845,6 +914,9 @@ function _zimCount(z) {
   if (!z) return undefined;
   const articles = typeof z.article_count === 'number' ? z.article_count : undefined;
   const entries = typeof z.entries === 'number' ? z.entries : undefined;
+  // A capture counted its own pages. libzim's article count cannot know
+  // that: for a whole crawl it reported two, one a vendor feedback widget.
+  if (z.capture && z.capture.pages) return z.capture.pages;
   if (articles === undefined) return entries;
   if (z.zimi_export) return articles;      // a capture really is one page
   if (articles <= 1 && entries > 1) return entries;
@@ -1400,8 +1472,14 @@ function updateTopbar() {
       /\.(pdf|epub)$/i.test(currentArticle.path || '');
     saveBtn.style.display = showSave ? 'flex' : 'none';
   }
-  randomBtn.style.display = (mode !== 'manage' && !_almanacOpen && !_createOpen) ? 'flex' : 'none';
-  document.getElementById('library-btn').style.display = (mode !== 'manage' && !_almanacOpen && !_createOpen) ? 'flex' : 'none';
+  // The Create page keeps the topbar it had. Hiding these put a wide desktop
+  // window into the mobile shape — three controls and a ⋯ — which reads as the
+  // toolbar breaking rather than as focus (#68). Almanac still hides them: it
+  // paints its own full-screen scene and the library chrome would sit on top
+  // of it, where Create is an ordinary page under the same bar.
+  var libraryChromeOff = mode === 'manage' || _almanacOpen;
+  randomBtn.style.display = libraryChromeOff ? 'none' : 'flex';
+  document.getElementById('library-btn').style.display = libraryChromeOff ? 'none' : 'flex';
   // Create-a-ZIM lives in the ⋯ menu at every width — creation is an
   // occasional, deliberate act, so it stays out of the primary topbar. The ⋯
   // trigger is CSS-hidden on a wide viewport at rest, so reveal it (inline
@@ -1413,7 +1491,7 @@ function updateTopbar() {
   // on a wide viewport — hiding it there strands the admin.
   var moreBtn = document.querySelector('.topbar-more');
   if (moreBtn) {
-    moreBtn.style.display = (_createMenuRowAvailable() || _createOpen) ? 'flex' : '';
+    moreBtn.style.display = _createMenuRowAvailable() ? 'flex' : '';
     _syncTopbarMoreSolo(moreBtn);
   }
   document.getElementById('lang-selector-btn').style.display =
@@ -1881,7 +1959,7 @@ async function _initSecondary() {
   // manage button). Not while manage is open: on a slow library the gear can be
   // used long before this resolves, and painting home over it leaves the manage
   // chrome (X button, catalog placeholder) on top of the home view.
-  if (needsRerender && mode !== 'manage' && !readerOpen && !currentSource && !readerSource) renderHome();
+  if (needsRerender) _renderHomeSoon();
 }
 
 function route(push) {
@@ -2847,7 +2925,7 @@ function renderHome(filter) {
     statsBar.style.display = '';
   }
 
-  const sortedAll = zims.filter(z => z.entries !== '?').sort((a, b) => (b.entries || 0) - (a.entries || 0));
+  const sortedAll = _sortLibrary(zims.filter(z => z.entries !== '?'));
 
   // Language filter data — count of ZIMs per language, over the whole library.
   // The pill row only appears with ≥2 distinct languages; a mono-language
@@ -2993,7 +3071,9 @@ function renderHome(filter) {
   if (!homeScope) {
     const favNames = (collectionsCache && collectionsCache.favorites) || [];
     if (!filter && favNames.length > 0) {
-      const favZims = favNames.map(n => _zimInfo(n)).filter(Boolean);
+      // The star order is the order they were starred in; the library's own
+      // order is what the person chose, so it wins here too.
+      const favZims = _sortLibrary(favNames.map(n => _zimInfo(n)).filter(Boolean));
       if (favZims.length > 0) {
         const favZimNames = favZims.map(z => z.name);
         h += '<div class="cat-heading clickable" onclick="enterScope(\'favorites\',\'\u2605 ' + escJs(t('favorites')) + '\',' + escJs(JSON.stringify(favZimNames)) + ',true)">\u2605 ' + tH('favorites') + '</div>';
@@ -3042,7 +3122,7 @@ function renderHome(filter) {
     var _sections = [];
     if (!filter && collectionsCache && collectionsCache.collections) {
       for (const [cname, coll] of Object.entries(collectionsCache.collections)) {
-        const collZims = (coll.zims || []).map(n => _zimInfo(n)).filter(Boolean);
+        const collZims = _sortLibrary((coll.zims || []).map(n => _zimInfo(n)).filter(Boolean));
         if (collZims.length > 0) {
           const collZimNames = collZims.map(z => z.name);
           _sections.push({ key: 'col:' + cname, html:
@@ -3263,6 +3343,140 @@ function _runRecentSearch(query, zim) {
 function _getLibraryView() {
   return localStorage.getItem(SK.LIBRARY_VIEW) === 'tiles' ? 'tiles' : 'list';
 }
+var LIBRARY_SORTS = ['alpha', 'added', 'updated', 'entries'];
+function _librarySort() {
+  var v = localStorage.getItem(SK.LIBRARY_SORT);
+  return LIBRARY_SORTS.indexOf(v) >= 0 ? v : 'alpha';
+}
+function _setLibrarySort(mode) {
+  if (LIBRARY_SORTS.indexOf(mode) < 0) return;
+  localStorage.setItem(SK.LIBRARY_SORT, mode);
+  // Move the cards rather than rebuild them. Changing the order changes only
+  // the order: the same cards, in a different sequence. Rebuilding threw the
+  // whole library away and made it again, which reads as the page flashing
+  // (Eric: "don't like how it all flashes when I change the sort type, can it
+  // flow to the new position nicely like in iOS"). Falls back to a full render
+  // if anything about the page is not the shape this expects.
+  if (!_reorderLibraryInPlace()) renderHome();
+}
+
+// How long a card takes to slide to its new place. Short enough to feel like a
+// response to the tap and not an animation being performed at you.
+var LIBRARY_REFLOW_MS = 320;
+
+// Re-sort every card grid on screen, in place, animating each card from where
+// it was to where it now belongs. Returns false when it cannot — the caller
+// then does the honest thing and rebuilds.
+function _reorderLibraryInPlace() {
+  if (!output || !zimsCache || !zimsCache.length) return false;
+  var grids = output.querySelectorAll('.stats-grid');
+  if (!grids.length) return false;
+  var compare = _LIBRARY_SORTERS[_librarySort()] || _LIBRARY_SORTERS.alpha;
+  var still = false;
+  try {
+    still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) {}
+
+  var moves = [];
+  for (var g = 0; g < grids.length; g++) {
+    var grid = grids[g];
+    var cards = Array.prototype.slice.call(grid.querySelectorAll('.stat-card[data-zim]'));
+    if (cards.length < 2) continue;
+    var known = cards.map(function(card) {
+      return { card: card, zim: _zimInfo(card.dataset.zim) };
+    });
+    // A card whose ZIM we cannot look up means the page and the library have
+    // drifted apart; a rebuild is the only honest answer.
+    if (known.some(function(k) { return !k.zim; })) return false;
+    var sorted = known.slice().sort(function(a, b) { return compare(a.zim, b.zim); });
+    var same = sorted.every(function(k, i) { return k.card === known[i].card; });
+    if (same) continue;
+    moves.push({ grid: grid, sorted: sorted, cards: cards });
+  }
+
+  // The date each card carries is the one being sorted by, so it changes even
+  // where the order does not.
+  _refreshCardAges();
+  if (!moves.length) return true;
+
+  moves.forEach(function(m) {
+    var before = still ? null : m.cards.map(function(c) { return c.getBoundingClientRect(); });
+    m.sorted.forEach(function(k) { m.grid.appendChild(k.card); });
+    if (still) return;
+    // First/Last/Invert/Play: put every card back where the eye last saw it,
+    // then let it travel to where it now is.
+    m.cards.forEach(function(card, i) {
+      var now = card.getBoundingClientRect();
+      var dx = before[i].left - now.left;
+      var dy = before[i].top - now.top;
+      if (!dx && !dy) return;
+      card.style.transition = 'none';
+      card.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    });
+  });
+  if (still) return true;
+
+  // One frame later, with every card parked at its old position, release them
+  // all together so the whole shelf moves as one thing.
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      moves.forEach(function(m) {
+        m.cards.forEach(function(card) {
+          if (!card.style.transform) return;
+          card.style.transition = 'transform ' + LIBRARY_REFLOW_MS +
+            'ms cubic-bezier(0.22, 0.61, 0.36, 1)';
+          card.style.transform = '';
+        });
+      });
+      setTimeout(function() {
+        moves.forEach(function(m) {
+          m.cards.forEach(function(card) {
+            card.style.transition = '';
+            card.style.transform = '';
+          });
+        });
+      }, LIBRARY_REFLOW_MS + 60);
+    });
+  });
+  return true;
+}
+
+// The age on each card, after the thing being sorted by has changed. Rewrites
+// only that one span, so nothing else on the card is touched — which is the
+// whole point of not rebuilding.
+function _refreshCardAges() {
+  if (!output) return;
+  var cards = output.querySelectorAll('.stat-card[data-zim]');
+  for (var i = 0; i < cards.length; i++) {
+    var detail = cards[i].querySelector('.detail');
+    if (!detail) continue;
+    var zim = _zimInfo(cards[i].dataset.zim);
+    var was = detail.querySelector('.card-when');
+    if (was) was.remove();
+    var html = zim ? _sortedByDateHtml(zim) : '';
+    if (html) detail.insertAdjacentHTML('beforeend', html);
+    // The ZIM's own date steps aside while the sorted one is there, and comes
+    // back when it goes.
+    var own = detail.querySelector('.card-date');
+    if (own) own.hidden = !!html;
+  }
+}
+// One comparator per order, so the sort is a lookup rather than a branch at
+// each call site.
+var _LIBRARY_SORTERS = {
+  alpha: function(a, b) {
+    // The title a person reads on the card, not the file name they never see.
+    var at = (a.title || a.name || ''), bt = (b.title || b.name || '');
+    return at.localeCompare(bt, undefined, {sensitivity: 'base', numeric: true});
+  },
+  added: _byFirstSeenDesc,
+  updated: _byUpdatedDesc,
+  entries: function(a, b) { return (b.entries || 0) - (a.entries || 0); },
+};
+function _sortLibrary(list) {
+  return list.slice().sort(_LIBRARY_SORTERS[_librarySort()] || _LIBRARY_SORTERS.alpha);
+}
+
 function _setLibraryView(mode) {
   if (mode !== 'tiles') mode = 'list';
   try { localStorage.setItem(SK.LIBRARY_VIEW, mode); } catch (e) {}
@@ -3282,6 +3496,24 @@ function _libViewToggleHtml() {
     '</span>';
 }
 
+// The order control, beside the view toggle: both answer "how do I want to
+// look at my library", so they share a line rather than each taking one.
+var _LIBRARY_SORT_LABELS = {
+  alpha: 'sort_alpha', added: 'sort_added',
+  updated: 'sort_updated', entries: 'sort_entries',
+};
+function _libSortHtml() {
+  var cur = _librarySort();
+  var opts = LIBRARY_SORTS.map(function(k) {
+    return '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' +
+      esc(t(_LIBRARY_SORT_LABELS[k])) + '</option>';
+  }).join('');
+  return '<select class="lib-sort" aria-label="' + escAttr(t('library_sort')) +
+    '" title="' + escAttr(t('library_sort')) +
+    '" onchange="event.stopPropagation();_setLibrarySort(this.value)"' +
+    ' onclick="event.stopPropagation()">' + opts + '</select>';
+}
+
 // Place the segmented view toggle on the first section header (Favorites, or the
 // first category/collection) — a global control that reuses the first header's
 // line rather than a bar of its own. No-op when there is no header to host it.
@@ -3290,7 +3522,8 @@ function _placeViewToggle() {
   var heading = output.querySelector('.cat-heading');
   if (!heading || heading.querySelector('.lib-view-toggle')) return;
   heading.classList.add('has-view-toggle');
-  heading.insertAdjacentHTML('beforeend', _libViewToggleHtml());
+  heading.insertAdjacentHTML('beforeend',
+    '<span class="lib-controls">' + _libSortHtml() + _libViewToggleHtml() + '</span>');
 }
 
 // ── About this ZIM: provenance badges, and the panel behind them ────────────
@@ -3385,9 +3618,36 @@ function _refreshCreatedBuckets() {
   if (!moved) return;
   if (mode === 'manage') {
     if (manageTab === 'installed') renderInstalled();
-  } else if (!readerOpen && !currentSource && !readerSource) {
-    renderHome();
+  } else {
+    // Coalesced: the collections fetch is usually landing at the same moment
+    // and wants the same render.
+    _renderHomeSoon();
   }
+}
+
+// Home renders that follow LATE DATA, merged into one.
+//
+// Three separate things land in the first second of a cold load — the library
+// list, the collections, the provenance walk — and each one changes what home
+// shows, so each one used to re-render it. A render rebuilds every card's
+// innerHTML, which throws away every icon <img> and creates a new one, so a
+// boot asked the server for all 74 icons twice and the page visibly rebuilt
+// itself three times (Eric, 2026-09-11: "pulsing on the top a lot", "icons
+// disappear and redownload").
+//
+// The first render still happens at once — it is what the person is waiting
+// for. Only the follow-ups coalesce, into one render a beat later. The window
+// is long enough to catch two fetches finishing near each other and short
+// enough that nobody sees it wait.
+var HOME_RERENDER_COALESCE_MS = 60;
+var _homeRerenderTimer = null;
+function _renderHomeSoon() {
+  clearTimeout(_homeRerenderTimer);
+  _homeRerenderTimer = setTimeout(function() {
+    _homeRerenderTimer = null;
+    if (mode === 'manage' || readerOpen || currentSource || readerSource) return;
+    renderHome();
+  }, HOME_RERENDER_COALESCE_MS);
 }
 
 // No-op on a card that already carries its badge, so this is safe to call after
@@ -3684,6 +3944,70 @@ function _openZimAbout(zim) {
     .catch(function () { write('<div class="zi-none">' + tH('zi_load_failed') + '</div>'); });
 }
 
+// The date a card is currently ordered by, when it is ordered by a date.
+//
+// Deliberately not always: the card already says what it is, how much of it
+// there is and how big it is, and a fourth fact on every card answers a
+// question nobody asked. But the moment someone picks "Recently added", that
+// date IS what they are reading the list by — and an order you cannot see the
+// key of is an order you have to take on trust. So it appears because it was
+// asked for, and leaves when it stops being the question.
+// The ZIM's own date, hidden while the one being sorted by is on the card:
+// "· 2026-09-12 · Added Sep 12" is the same fact twice, and the one that
+// carries its meaning with it is the one worth keeping.
+function _cardOwnDateHtml(z) {
+  if (!_isZimiExport(z) || !z.date) return '';
+  return '<span class="card-date"' + (_sortedByDateHtml(z) ? ' hidden' : '') +
+    '> &middot; ' + esc(z.date) + '</span>';
+}
+
+function _sortedByDateHtml(z) {
+  var by = _librarySort();
+  var ts = by === 'added' ? z.first_seen : by === 'updated' ? z.updated_at : null;
+  if (!ts) return '';
+  var age = _shortAge(ts);
+  if (!age) return '';
+  // Small on the line, and the context on the timestamp behind it. The detail
+  // line already carries a count and a size; a third fact spelled out pushed it
+  // onto two rows on a phone and was more than the glance needed. What the
+  // date MEANS still has to be said somewhere, because the two orders mean
+  // opposite things — the day a ZIM arrived and the day its contents changed —
+  // so the tooltip says it in full.
+  return '<span class="card-when" title="' +
+    escAttr(_fullWhen(by, ts)) + '"> &middot; ' + esc(age) + '</span>';
+}
+
+// The whole answer, for the tooltip: which date this is and when, spelled out.
+function _fullWhen(by, tsSec) {
+  var d = new Date(tsSec * 1000);
+  var when;
+  try {
+    when = d.toLocaleString(_currentLang || 'en', {
+      day: 'numeric', month: 'long', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+  } catch (e) {
+    when = d.toISOString();
+  }
+  return t(by === 'added' ? 'card_added_on' : 'card_updated_on', { date: when });
+}
+
+// How long ago, in the fewest characters that still answer it. The question a
+// sorted list asks is "how recent", never "exactly when" — that is what the
+// tooltip is for. Units stop at the largest that fits in two characters.
+var _AGE_STEPS = [
+  ['y', 31536000], ['mo', 2592000], ['d', 86400], ['h', 3600], ['m', 60],
+];
+function _shortAge(tsSec) {
+  if (!tsSec) return '';
+  var secs = Math.max(0, Math.round(Date.now() / 1000 - tsSec));
+  for (var i = 0; i < _AGE_STEPS.length; i++) {
+    var n = Math.floor(secs / _AGE_STEPS[i][1]);
+    if (n >= 1) return n + _AGE_STEPS[i][0];
+  }
+  return t('just_now');
+}
+
 function renderCardGrid(items, showStars, showCategory) {
   if (!items || !items.length) return '';
   const favs = (collectionsCache && collectionsCache.favorites) || [];
@@ -3731,7 +4055,10 @@ function renderCardGrid(items, showStars, showCategory) {
         (z.description ? '<div class="desc">' + esc(z.description) + '</div>' : '') +
         '<div class="detail">' + catPrefix + _zimCountHtml(z) +
         ' &middot; ' + fmtSize(z.size_gb) +
-        (_isZimiExport(z) && z.date ? ' &middot; ' + esc(z.date) : '') +
+        // Both dates carry their own separator, so either can be taken out
+        // without leaving a dangling middot behind — which is what lets the
+        // in-place re-sort swap them without rebuilding the card.
+        _cardOwnDateHtml(z) + _sortedByDateHtml(z) +
         '</div>' +
       '</div></' + cardTag + '>';
   }).join('') + '</div>';
@@ -9592,15 +9919,24 @@ function _saveUserAllowlist(name) {
 
 // A yes/no capability as a coloured word rather than a checkbox — nothing here
 // is settable from this pane, so a control would be a lie.
+// null means the server has not finished looking — finding out whether the
+// rendered engine works means launching a browser. "Not looked" is not "not
+// installed", and showing the second for the first tells an admin their
+// browser is missing when it is not.
 function _creatorStateHtml(ready, hint) {
+  if (ready === null || ready === undefined) {
+    return '<span class="app-update-quiet">' + tH('creator_checking') + '</span>';
+  }
   var cls = ready ? 'app-update-badge' : 'app-update-quiet';
   var text = tH(ready ? 'creator_installed' : 'creator_not_installed');
   return '<span class="' + cls + '"' + (hint ? ' title="' + escAttr(hint) + '"' : '') + '>' + text + '</span>';
 }
 
 // The one command that fixes a missing part. Shown under the row it belongs
-// to, and only when that part is actually missing.
+// to, and only when that part is actually missing — never while we are still
+// finding out, or the pane offers an install for something already installed.
 function _creatorInstallHtml(ready, cmd) {
+  if (ready === null || ready === undefined) return '';
   return ready ? '' : '<code class="app-update-cmd">' + esc(cmd) + '</code>';
 }
 
@@ -9631,6 +9967,16 @@ function _msCreatorHtml() {
 // The sidecar's value cell: version first, muted, then the verdict — so the
 // verdict word right-aligns flush with every other row's, instead of the
 // version breaking the status column (Eric: "The version isn't aligned").
+// The sidecar's row, from the whole payload rather than from the sidecar
+// object: null there means the server is still looking, and both the first
+// paint and the later patch have to say so the same way.
+function _creatorSidecarCell(d) {
+  return d.sidecar ? _creatorSidecarHtml(d.sidecar) : _creatorStateHtml(null);
+}
+function _creatorSidecarCmd(d) {
+  return _creatorInstallHtml(d.sidecar ? d.sidecar.installed : null, 'zimi import --setup');
+}
+
 function _creatorSidecarHtml(sidecar) {
   return (sidecar.version ? '<span class="app-update-quiet">' + esc(sidecar.version) + '</span> ' : '') +
     _creatorStateHtml(sidecar.installed);
@@ -9652,7 +9998,6 @@ function _creatorQueueHtml(queue) {
 }
 
 function _creatorHtml(d) {
-  var sidecar = d.sidecar || {};
   var sep = '<div style="border-top:1px solid var(--border);margin:16px 0 14px"></div>';
 
   // Defaults a new capture starts with — the control you actually touch.
@@ -9670,8 +10015,8 @@ function _creatorHtml(d) {
     '<div class="ms-hint" style="margin-bottom:10px">' + tH('creator_engines_hint') + '</div>' +
     _mcRow(tH('creator_browser'), '<span id="ms-cr-browser">' + _creatorStateHtml(d.browser_ready) + '</span>') +
     '<div id="ms-cr-browser-cmd">' + _creatorInstallHtml(d.browser_ready, "pip install 'zimi[browser]' && playwright install chromium") + '</div>' +
-    _mcRow(tH('creator_sidecar'), '<span id="ms-cr-sidecar">' + _creatorSidecarHtml(sidecar) + '</span>') +
-    '<div id="ms-cr-sidecar-cmd">' + _creatorInstallHtml(sidecar.installed, 'zimi import --setup') + '</div>' +
+    _mcRow(tH('creator_sidecar'), '<span id="ms-cr-sidecar">' + _creatorSidecarCell(d) + '</span>') +
+    '<div id="ms-cr-sidecar-cmd">' + _creatorSidecarCmd(d) + '</div>' +
     _mcRow(tH('creator_alive'), '<span id="ms-cr-alive">' + _creatorStateHtml(d.alive_ready) + '</span>');
 
   // Made here LAST — an unbounded, growing list, and the slow half to gather
@@ -9692,7 +10037,17 @@ function _creatorLoadInventory() {
     var el = document.getElementById('ms-cr-made');
     if (el && _msSection === 'creator') el.innerHTML = _creatorMadeHtml(_creatorInventory || {});
   };
-  if (_creatorInventory) { fill(); return; }
+  // Never synchronously. This is called from inside _creatorHtml, WHILE that
+  // function is still building the string it is about to return — so a fill
+  // that runs now writes into the DOM the pane is about to replace, and the
+  // "Loading…" placeholder in the string being built lands on top of it and
+  // stays there for ever (Eric: "MADE HERE never completes Loading…").
+  //
+  // Nothing about the fetch made this visible: it happens precisely when the
+  // answer is ALREADY here, so the faster the server is, the more reliably it
+  // hangs. A timeout puts the fill after the caller's innerHTML assignment,
+  // the same way _msCreatorHtml already defers its own first render.
+  if (_creatorInventory) { setTimeout(fill, 0); return; }
   manageFetch('/manage/creator/inventory').then(function(r) { return r.json(); }).then(function(d) {
     _creatorInventory = d;
     fill();
@@ -9767,15 +10122,14 @@ function _creatorSortBy(key) {
 // Scoped background refresh: leaf nodes only, so a visible pane never rebuilds
 // under the reader (or under a finger halfway to a switch).
 function _patchCreatorSection(d) {
-  var sidecar = d.sidecar || {};
   var put = function(id, html) {
     var el = document.getElementById(id);
     if (el && el.innerHTML !== html) el.innerHTML = html;
   };
   put('ms-cr-browser', _creatorStateHtml(d.browser_ready));
   put('ms-cr-browser-cmd', _creatorInstallHtml(d.browser_ready, "pip install 'zimi[browser]' && playwright install chromium"));
-  put('ms-cr-sidecar', _creatorSidecarHtml(sidecar));
-  put('ms-cr-sidecar-cmd', _creatorInstallHtml(sidecar.installed, 'zimi import --setup'));
+  put('ms-cr-sidecar', _creatorSidecarCell(d));
+  put('ms-cr-sidecar-cmd', _creatorSidecarCmd(d));
   put('ms-cr-alive', _creatorStateHtml(d.alive_ready));
   put('ms-cr-queue', _creatorQueueHtml(d.queue));
   ['block_ads', 'capture_variants'].forEach(function(key) {
@@ -9783,6 +10137,12 @@ function _patchCreatorSection(d) {
     if (input) input.checked = !!d[key + '_default'];
   });
 }
+
+// How long to wait before asking again while the server is still probing what
+// this machine can capture with. A browser launch is the slow one, measured at
+// about 2.5s on a NAS.
+var CREATOR_PROBE_RETRY_MS = 1500;
+var _creatorProbeTimer = null;
 
 function _renderCreatorSection() {
   if (!document.getElementById('ms-creator')) return;
@@ -9792,8 +10152,17 @@ function _renderCreatorSection() {
     _creatorData = d;
     var slot = document.getElementById('ms-creator');
     if (!slot || _msSection !== 'creator') return;
-    if (first) { slot.innerHTML = _creatorHtml(d); return; }
-    if (changed) _patchCreatorSection(d);
+    if (first) slot.innerHTML = _creatorHtml(d);
+    else if (changed) _patchCreatorSection(d);
+    // The pane paints at once with what is known and fills the capability rows
+    // in when the server's probe lands, rather than holding the whole thing
+    // back for a browser launch.
+    clearTimeout(_creatorProbeTimer);
+    if (d.probing) {
+      _creatorProbeTimer = setTimeout(function() {
+        if (_msSection === 'creator') _renderCreatorSection();
+      }, CREATOR_PROBE_RETRY_MS);
+    }
   }).catch(function() {
     var slot = document.getElementById('ms-creator');
     // A cached paint stays up through a failed refresh — stale beats blank.
@@ -9854,7 +10223,14 @@ function _autoUpdateSelectHtml(au) {
   var lock = au.locked
     ? ' disabled title="' + escAttr(t('au_controlled_by_env')) + '" style="' + _AU_SELECT_CSS + ';opacity:0.5"'
     : ' style="' + _AU_SELECT_CSS + '"';
-  return '<select id="auto-update-freq" onchange="toggleAutoUpdate()"' + lock + '>' + opts + '</select>';
+  var select = '<select id="auto-update-freq" onchange="toggleAutoUpdate()"' + lock + '>' + opts + '</select>';
+  // A greyed-out control with the reason hidden in a hover tooltip reads as
+  // broken, and did (#69): the reporter saw "Daily" that would not change and
+  // no way to learn why. The reason goes beside it.
+  if (au.locked) {
+    select += '<div class="ms-hint au-why">' + tH('au_controlled_by_env') + '</div>';
+  }
+  return select;
 }
 
 // One label/value row, which is the shape every settings row in these panes
@@ -10847,6 +11223,13 @@ async function _renderSeedingSection() {
     : bt.status === 'unavailable' ? '#d9a13d' : 'var(--text3)';
   const stateLabel = starting ? t('bt_state_starting') : t('bt_state_' + bt.status);
   statusEl.innerHTML = '<span class="share-port-dot" style="background:' + stColor + '"></span>' + esc(stateLabel);
+  // The server already works out WHY it is off — no wheel for this Python, or
+  // the switch is set by the environment. Saying only "unavailable" leaves the
+  // person with nothing to do about it (#70).
+  if (bt.hint) {
+    statusEl.innerHTML += '<div class="ms-hint bt-why">' + esc(bt.hint) + '</div>';
+    statusEl.title = bt.hint;
+  }
   window._btStatusHtml = statusEl.innerHTML;
   // Port reachability dot, updated in place (no row rebuild).
   const pdot = document.getElementById('share-port-dot');
@@ -14837,10 +15220,40 @@ function openReader(url) {
     // wiktionary ZIM is installed). Works in the normal reader AND Reader View
     // (same document, listeners attached once per load survive the transform).
     try { _defineAttachToDoc(frame); } catch(e) {}
-    // A consent wall that the ARCHIVE rebuilds every time it is opened.
-    try { _sweepBlockingOverlays(frame); } catch(e) {}
-    // A captured page's JS-driven chrome, put back in its place.
-    try { _settleCapturedChrome(frame); } catch(e) {}
+    // A consent wall the ARCHIVE rebuilds every time it is opened, and a
+    // captured page's JS-driven chrome put back in its place. Both edit the
+    // article's DOM, which is safe on a frozen capture and NOT safe on one
+    // whose scripts still run: an alive capture hydrates a moment after load,
+    // and React finding the DOM changed under it throws
+    // "removeChild: the node to be removed is not a child" and re-renders a
+    // stump. draculatheme.com came out with its palette gone (#64) — the page
+    // worked in a bare iframe and broke in ours, which is the tell.
+    //
+    // So on a live replay they wait for the page to finish waking up. The
+    // delay is not a guess about React: it is the same settle the reader
+    // already gives a captured page before it measures anything.
+    var _replayAlive = false;
+    try { _replayAlive = !!(frame.contentWindow && frame.contentWindow._wb_wombat); } catch (e) {}
+    // Zimi's own pages get loaded into this frame too — today that is the
+    // pdf.js viewer. They are not captured web pages, so none of the passes
+    // that tidy up a capture may run on them. Everything below here that edits
+    // the document already checked the frame's path for itself; these two did
+    // not, and the hollow-block collapse is the one that could not survive it.
+    //
+    // At frame.onload pdf.js has parsed the document but has not painted a
+    // canvas yet — that comes a moment later, off an IntersectionObserver. So
+    // #viewerContainer is, at exactly that instant, a tall empty transparent
+    // box with no embedded media in it, which is the description of an
+    // abandoned ad slot. It got height:0 !important, nothing was ever in view
+    // again for pdf.js's own observer, and no page ever rendered. Reported by
+    // Joe (WB3IHY), with the cause and the fix (#71).
+    var _settlePasses = function() {
+      if (_frameIsOurOwnPage(frame)) return;
+      try { _sweepBlockingOverlays(frame); } catch(e) {}
+      try { _settleCapturedChrome(frame); } catch(e) {}
+    };
+    if (_replayAlive) setTimeout(_settlePasses, REPLAY_SETTLE_MS);
+    else _settlePasses();
     // Inject responsive CSS + scroll-to-top button for mobile
     try {
       // Web-mirror pages (alive engine, zimit) ship a browser's-eye recording of
@@ -16651,6 +17064,9 @@ function openArticle(zim, path, title, opts) {
   // Any normal article open cancels a pending "return to almanac" intent; the
   // almanac deep-link path re-stamps it immediately after this call returns.
   _almReturnScroll = null;
+  // A capture that kept both of the site's faces opens on the one that matches
+  // the theme being read in. A no-op for every other ZIM.
+  path = _facePathFor(zim, path);
   // Modifier-click: always open in new browser tab
   if (_isModClick()) {
     _lastMouseEvent = null;
@@ -17772,6 +18188,23 @@ function _isHollow(el) {
 // Runs on every ZIM. Each rule only fires on the exact condition it names, and
 // a Wikipedia article has no empty ad slots, nothing sticky that matters, and
 // nothing that pulses.
+// How long a replayed page is given to wake up before Zimi touches its DOM.
+// Long enough for a React app to hydrate on a slow machine, short enough that
+// a consent wall is not left standing while somebody reads.
+var REPLAY_SETTLE_MS = 2500;
+
+// Whether what the reader frame is showing is Zimi's own page rather than
+// something out of a ZIM. Everything that edits a captured page's DOM has to
+// ask first: our own pages are not captures, and the cleanup meant for one
+// breaks the other.
+function _frameIsOurOwnPage(frame) {
+  try {
+    return frame.contentWindow.location.pathname.startsWith('/static/');
+  } catch (e) {
+    return false;  // unreadable is not ours; treat it as a page, not a tool
+  }
+}
+
 function _settleCapturedChrome(frame) {
   var doc = frame.contentDocument;
   var win = frame.contentWindow;

@@ -543,7 +543,10 @@ def test_subtitles_are_asked_for_in_a_few_languages_not_all(monkeypatch, tmp_pat
 
     fake.YoutubeDL = Recording
     video.create_video_zim(
-        PLAYLIST_URL, out_dir=str(tmp_path / "out"), work_dir=str(tmp_path), language="es"
+        PLAYLIST_URL,
+        out_dir=str(tmp_path / "out"),
+        work_dir=str(tmp_path),
+        language="es",
     )
     downloads = [o for o in seen if o.get("writesubtitles")]
     assert downloads, "no download asked for subtitles at all"
@@ -551,7 +554,9 @@ def test_subtitles_are_asked_for_in_a_few_languages_not_all(monkeypatch, tmp_pat
         langs = opts["subtitleslangs"]
         assert "all" not in langs, langs
         assert any(l.startswith("en") for l in langs), langs
-        assert any(l.startswith("es") for l in langs), "the requested language is wanted too"
+        assert any(
+            l.startswith("es") for l in langs
+        ), "the requested language is wanted too"
         assert len(langs) <= 4, langs
 
 
@@ -579,7 +584,9 @@ def test_a_subtitle_refusal_does_not_end_the_video(monkeypatch, tmp_path):
     # Each video was tried with captions, refused, and carried without them.
     assert attempts == [True, False] * 3, attempts
     arc = Archive(info["path"])
-    assert bytes(arc.get_entry_by_path("media/v1.mp4").get_item().content) == b"MP41" * 250
+    assert (
+        bytes(arc.get_entry_by_path("media/v1.mp4").get_item().content) == b"MP41" * 250
+    )
 
 
 def test_every_thumbnail_on_the_index_is_the_same_size():

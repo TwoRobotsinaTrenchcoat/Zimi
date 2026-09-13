@@ -162,7 +162,9 @@ class TestAPageIsNotAnAsset(unittest.TestCase):
         def reader(url):
             return b"<html><body>a whole article</body></html>", "text/html"
 
-        carrier = _AssetCarrier(added.append, make_asset_item, None, remote_reader=reader)
+        carrier = _AssetCarrier(
+            added.append, make_asset_item, None, remote_reader=reader
+        )
         self.assertIsNone(carrier._carry_remote("https://cdn.test/looks-like.png"))
         self.assertEqual(added, [])
 
@@ -190,7 +192,9 @@ class TestAPageIsNotAnAsset(unittest.TestCase):
         def reader(url):
             return b"\x89PNG\r\n\x1a\n", "image/png"
 
-        carrier = _AssetCarrier(added.append, make_asset_item, None, remote_reader=reader)
+        carrier = _AssetCarrier(
+            added.append, make_asset_item, None, remote_reader=reader
+        )
         self.assertIsNotNone(carrier._carry_remote("https://cdn.test/real.png"))
         self.assertEqual(len(added), 1)
 

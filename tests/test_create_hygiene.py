@@ -151,7 +151,7 @@ def test_kill_takes_the_driver_out_from_any_thread(tmp_path):
         assert _zimi_droppings(str(tmp_path)) == []
     finally:
         try:
-            os.kill(proc.pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
+            os.kill(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
         except OSError:
             pass
 
@@ -174,7 +174,7 @@ def test_shutdown_sessions_kills_every_registered_browser(tmp_path):
         assert _zimi_droppings(str(tmp_path)) == []
     finally:
         try:
-            os.kill(proc.pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
+            os.kill(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
         except OSError:
             pass
 
@@ -218,9 +218,7 @@ def test_an_explicit_working_directory_still_wins(tmp_path, monkeypatch):
     assert creator.scratch_dir(str(asked), str(out)) == str(asked)
 
 
-def test_a_configured_but_unmade_library_is_created_not_skipped(
-    tmp_path, monkeypatch
-):
+def test_a_configured_but_unmade_library_is_created_not_skipped(tmp_path, monkeypatch):
     """A ZIM_DIR that is configured and does not exist yet is an ordinary state
     on a fresh install. Falling past it to the machine's temp would scatter a
     user's working files somewhere they never pointed at — and /tmp is a RAM

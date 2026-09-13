@@ -24,6 +24,12 @@ services:
     build: .
     container_name: zim-reader
     restart: unless-stopped
+    # PID 1 in a container is expected to reap orphans, and PID 1 here is
+    # `python3 -m zimi serve`, which reaps nothing. Docker's own init (tini)
+    # goes in front of it and collects whatever the code still misses. A net,
+    # not the fix: zimi/subproc.py is what stops a cancelled capture leaving a
+    # browser running. Without both, a NAS ran up 20 zombies in 21 hours.
+    init: true
     user: "1026"
     network_mode: host
     volumes:

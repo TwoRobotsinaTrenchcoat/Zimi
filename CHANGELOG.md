@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.9.3] - 2026-09-13
+
+### Added
+
+- Captures keep a site's light and dark faces, and open the one matching your theme.
+- Captures made with the alive and zimit engines now carry their page list, source URL, pictures and creation record — in standard fields, so other readers benefit too.
+- Sort the library alphabetically, by date added, by date updated or by article count (#67).
+- Controls that cannot change say why: update frequency when the environment sets it (#69), BitTorrent when libtorrent is missing (#70).
+- Random article works on a captured site, which also restores its Discover card.
+
+### Fixed
+
+- JavaScript sites work from a ZIM — draculatheme.com's theme switch and colour tabs included (#64).
+- Darken articles works on every ZIM, in both directions (#65).
+- PDFs open in the reader again (#71). Reported by Joe (WB3IHY).
+- "Made here" in Manage → Creator finishes loading.
+- A capture's before-and-after pictures compare the right two things.
+- Cancelling a capture stops the browser it started.
+- A filename with spaces no longer ends a capture.
+- The engine suggested for a JavaScript app is one that can capture it, and the preview says what kind of page it found.
+- Alive and zimit captures keep their two pictures.
+- One captured site no longer spoils search suggestions across the whole library.
+- Create starts the job you asked for even if you never leave the address field, and empties the form when it finishes.
+- Places on unusual clocks show their time — Eucla, the Chathams, the Marquesas.
+- The step rail on a running capture, and the Discover strip, stop drawing stray lines.
+
+### Faster
+
+- Discover no longer holds up the rest of the app while it fills.
+- Manage → Creator opens at once instead of after several seconds.
+- Background jobs stopped undoing each other's work, which had the disk measuring the same files over and over.
+- The picture of the page being captured appears within seconds, on every engine.
+
 ## [1.9.2] - 2026-09-07
 
 What the first two days of 1.9 turned up, and the instruments that keep it from turning up again.

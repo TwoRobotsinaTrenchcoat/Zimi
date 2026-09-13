@@ -33,6 +33,7 @@ import zimi.renderer as renderer
 import zimi.server as _srv
 from zimi.http import ZimHandler
 
+
 def _need_browser():
     """Skip, checked INSIDE the test rather than at import.
 
@@ -59,6 +60,7 @@ def browser(fn):
         return fn(*a, **kw)
 
     return wrapper
+
 
 # Enough images that lazy-loading and scroll behaviour actually matter. CNN's
 # homepage carried 118; this is the same order without needing the network.

@@ -171,18 +171,41 @@ def compare(browser, base, token_file, out, rows):
     from PIL import Image, ImageDraw
 
     tok = open(token_file).read().strip()
-    req = urllib.request.Request(base + "/list", headers={"Authorization": "Bearer " + tok})
+    req = urllib.request.Request(
+        base + "/list", headers={"Authorization": "Bearer " + tok}
+    )
     items = _json.loads(urllib.request.urlopen(req, timeout=60).read())
     items = items if isinstance(items, list) else items.get("zims", [])
     for site in SITES:
         if not site.released:
             continue
-        theirs = next((z for z in items if (z.get("file") or "").endswith(site.released + ".zim")), None)
-        ours = next((r for r in rows if r["site"] == site.key and r["mode"] == "page" and r.get("strip")), None)
+        theirs = next(
+            (
+                z
+                for z in items
+                if (z.get("file") or "").endswith(site.released + ".zim")
+            ),
+            None,
+        )
+        ours = next(
+            (
+                r
+                for r in rows
+                if r["site"] == site.key and r["mode"] == "page" and r.get("strip")
+            ),
+            None,
+        )
         if not theirs or not ours:
-            print("compare: skipping", site.key, "(no released ZIM)" if not theirs else "(no strip of ours)", flush=True)
+            print(
+                "compare: skipping",
+                site.key,
+                "(no released ZIM)" if not theirs else "(no strip of ours)",
+                flush=True,
+            )
             continue
-        page = browser.new_page(viewport=PHONE, extra_http_headers={"Authorization": "Bearer " + tok})
+        page = browser.new_page(
+            viewport=PHONE, extra_http_headers={"Authorization": "Bearer " + tok}
+        )
         try:
             page.goto(base + "/w/" + theirs["name"], wait_until="load", timeout=120000)
             page.wait_for_timeout(2500)
@@ -198,9 +221,17 @@ def compare(browser, base, token_file, out, rows):
         sheet = Image.new("RGB", (w, a.height + b.height + 44), "white")
         d = ImageDraw.Draw(sheet)
         rd = ours.get("reader") or {}
-        d.text((4, 4), f"OURS {site.key} (page): {ours.get('card_facts', '')} | imgs {rd.get('painted')}/{rd.get('images')} | text {rd.get('text')}", fill="black")
+        d.text(
+            (4, 4),
+            f"OURS {site.key} (page): {ours.get('card_facts', '')} | imgs {rd.get('painted')}/{rd.get('images')} | text {rd.get('text')}",
+            fill="black",
+        )
         sheet.paste(a, (0, 22))
-        d.text((4, a.height + 26), f"THEIRS {site.released}: {(theirs.get('size_bytes') or 0) / 1e6:.1f} MB | {theirs.get('article_count', '?')} articles | imgs {reader.get('painted')}/{reader.get('images')} | text {reader.get('text')}", fill="black")
+        d.text(
+            (4, a.height + 26),
+            f"THEIRS {site.released}: {(theirs.get('size_bytes') or 0) / 1e6:.1f} MB | {theirs.get('article_count', '?')} articles | imgs {reader.get('painted')}/{reader.get('images')} | text {reader.get('text')}",
+            fill="black",
+        )
         sheet.paste(b, (0, a.height + 44))
         path = os.path.join(out, f"compare-{site.key}.png")
         sheet.save(path)
@@ -247,7 +278,9 @@ def main():
     ap.add_argument("--only")
     ap.add_argument("--modes", default="page")
     ap.add_argument("--cap", type=int, default=600)
-    ap.add_argument("--compare-base", help="the survey server holding the released ZIMs")
+    ap.add_argument(
+        "--compare-base", help="the survey server holding the released ZIMs"
+    )
     ap.add_argument("--compare-token", help="its Bearer credential file")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)

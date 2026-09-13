@@ -117,8 +117,19 @@ def main():
             prev_form = s["form"]
             # Evidence survives a kill: the report is rewritten every second.
             with open(os.path.join(a.out, "report.json"), "w") as f:
-                json.dump({"elapsed_s": t, "flips": flips, "frames": frames[-5:], "state": s,
-                           "api_changes": [(round(ts - t0, 1), key) for ts, key in api_log]}, f, indent=1)
+                json.dump(
+                    {
+                        "elapsed_s": t,
+                        "flips": flips,
+                        "frames": frames[-5:],
+                        "state": s,
+                        "api_changes": [
+                            (round(ts - t0, 1), key) for ts, key in api_log
+                        ],
+                    },
+                    f,
+                    indent=1,
+                )
             if s["done"] or s["failed"]:
                 frames.append({"t": t, **s})
                 page.screenshot(path=os.path.join(a.out, f"done-{int(t):03d}s.png"))

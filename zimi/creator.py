@@ -32,6 +32,7 @@ import base64
 import hashlib
 import html as _html
 import http.client
+import json
 import logging
 import mimetypes
 import os
@@ -49,6 +50,7 @@ import zimi.server as _srv
 from zimi.blocklist import blocked_phrase
 from zimi.zimwriter import (
     SHOT_DIMS_METADATA_KEY,
+    announce_shot,
     shot_verdict,
     add_packaged_shot,
     add_capture_shot,
@@ -236,6 +238,53 @@ def _capture_pictures(capture, html, final_url):
         except Exception as e:
             log.debug("packaged picture skipped: %s", e)
     return live, packaged
+
+
+OTHER_FACE_PATH = "A/index~other"
+FACES_METADATA_KEY = "X-Zimi-Faces"
+
+
+def _store_other_face(creator, static_cls, capture, title, final_url, note):
+    """Keep the site's other face when it has one, as a second entry.
+
+    A site with a dark mode serves a different page depending on the reader's
+    theme, and a capture could only ever keep one of them: someone reading in
+    dark opened a captured site and got the light one, which is not what the
+    site does. Both are kept now, and the reader shows whichever matches the
+    theme in front of the person.
+
+    The alternate is an ordinary entry beside the main one, so any other viewer
+    can still open it, and a metadata key says which is which. Most of its
+    assets are shared — it is the same page repainted — and the few it does not
+    share, like a hero swapped for a different file, were carried on its own
+    visit.
+
+    Returns the metadata value written, or "" when the site has one face."""
+    other = getattr(capture, "other_face", None)
+    if not other:
+        return ""
+    scheme, html, resources = other
+    rendered = capture.render_other(html, final_url, resources)
+    if not rendered:
+        return ""
+    creator.add_item(
+        static_cls(OTHER_FACE_PATH, f"{title} ({scheme})", rendered.encode("utf-8"))
+    )
+    value = json.dumps(
+        {
+            "main": scheme_of_main(scheme),
+            "other": {"scheme": scheme, "path": OTHER_FACE_PATH},
+        },
+        separators=(",", ":"),
+    )
+    creator.add_metadata(FACES_METADATA_KEY, value, "application/json")
+    note(f"kept the site's {scheme} face as well")
+    return value
+
+
+def scheme_of_main(other_scheme):
+    """The face the main entry holds, given the one stored beside it."""
+    return "light" if other_scheme == "dark" else "dark"
 
 
 def _store_pictures(creator, capture, html, final_url, note):
@@ -990,6 +1039,46 @@ def looks_like_spa(page):
     return len(_visible_text(page)) < SPA_MIN_TEXT_CHARS
 
 
+# What a client-side framework leaves in the HTML it served. Every one of these
+# is a runtime that expects to take the page over once it loads.
+#
+# Deliberately a list of things frameworks put in their own output rather than
+# a guess from markup shape: a hydration payload, a build-output directory, a
+# root the framework claims by id. Missing one costs a worse recommendation,
+# never a worse capture.
+_APP_RUNTIME_MARKERS = (
+    "__NEXT_DATA__",
+    "self.__next_f",
+    "/_next/static",
+    "__NUXT__",
+    "/_nuxt/",
+    "__remixContext",
+    "__sveltekit_",
+    "data-reactroot",
+    "ng-version=",
+    "__vite_plugin",
+    "/@vite/client",
+)
+
+
+def looks_like_app(page):
+    """True when the page ships a client-side framework's runtime.
+
+    Different question from ``looks_like_spa``, and the one that was missing.
+    A shell with no text is obvious; a SERVER-RENDERED app is not. Next.js
+    sends draculatheme.com's whole theme grid as HTML, so it reads as an
+    ordinary page by text alone — and then its palette tabs, its theme switch
+    and its search are all JavaScript, and a frozen snapshot has none of them.
+    Eric, 2026-09-12: "why did it recommend fast instead of something better!?"
+
+    Being an app does not make a capture bad, and plenty of pages are worth
+    freezing exactly as they are. It means the fast engine is the wrong DEFAULT
+    to offer, because what it drops is invisible until somebody clicks."""
+    if not page:
+        return False
+    return any(marker in page for marker in _APP_RUNTIME_MARKERS)
+
+
 # ── content language ────────────────────────────────────────────────────────
 #
 # What language a page is written in is a FACT ABOUT THE PAGE, not a preference
@@ -1171,6 +1260,25 @@ def _urlopen_retry(req, timeout, tries=3):
     raise last if last is not None else OSError("fetch failed with no error")
 
 
+# Characters a request target may not contain. A correctly encoded URL has
+# none of them, so substituting is safe against double-encoding: an existing
+# %20 is left alone and a literal space becomes one.
+_ILLEGAL_IN_REQUEST = re.compile(r"[\x00-\x20\x7f]")
+
+
+def _request_safe(url):
+    """``url`` with the characters http.client refuses percent-encoded.
+
+    Pages reference files whose names contain spaces. nerdfonts.com asks for
+    `/assets/fonts/Symbols-2048-em Nerd Font Complete v233.woff2`, which every
+    browser fetches by encoding the spaces and Python's http.client refuses
+    outright — so the font was not merely skipped, the exception escaped and
+    took the whole capture with it. Encoding is what a browser does, so the
+    file is kept rather than lost.
+    """
+    return _ILLEGAL_IN_REQUEST.sub(lambda m: "%%%02X" % ord(m.group()), url)
+
+
 def _http_asset_reader(origin, variants, timeout):
     """An ``_AssetCarrier`` asset reader pointed at HTTP: fetches
     ``origin/<resolved>``, same-origin by construction. Reads are capped at
@@ -1182,8 +1290,17 @@ def _http_asset_reader(origin, variants, timeout):
     def read(_label, resolved):
         cap = _zw._MAX_ASSET_BYTES
         url = origin + "/" + resolved
-        req = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
         try:
+            # Request() inside the try, and the same three exception families
+            # the remote-asset reader above catches, for the same reason it
+            # gives: no single asset may end a capture. InvalidURL is an
+            # HTTPException and not an OSError, so an unencodable reference —
+            # a font whose name has spaces in it — escaped this clause and
+            # killed the whole run. Same bug as the one already fixed sixty
+            # lines up; this is its twin, which was missed.
+            req = urllib.request.Request(
+                _request_safe(url), headers={"User-Agent": _user_agent()}
+            )
             with _urlopen_retry(req, timeout) as resp:
                 data = resp.read(cap + 1)
                 mime = (
@@ -1191,7 +1308,7 @@ def _http_asset_reader(origin, variants, timeout):
                     .split(";")[0]
                     .strip()
                 )
-        except OSError as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:
             log.debug("asset fetch failed %s: %s", url, e)
             return None
         if len(data) > cap:
@@ -1245,7 +1362,9 @@ def _http_remote_reader(timeout):
             #
             # Request() is inside the try because construction can raise too,
             # for a different set of malformed inputs than urlopen does.
-            req = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
+            req = urllib.request.Request(
+                _request_safe(url), headers={"User-Agent": _user_agent()}
+            )
             with _urlopen_retry(req, timeout) as resp:
                 mime = (
                     (resp.headers.get("Content-Type") or "")
@@ -1940,16 +2059,40 @@ class BuiltinCapture:
         session = self._picture_session()
         if session is None:
             return None, None
-        live = session.shoot_live(final_url)
+        # Already taken during fetch, on the ordinary path. Only re-shot when
+        # something skipped that — a caller handing us HTML it fetched itself.
+        live = self.last_shot or session.shoot_live(final_url)
         packaged = session.shoot_packaged(html, self._last_by_path, mainpath=mainpath)
         self._last_by_path = {}
-        self.last_shot = live
+        if self.last_shot is None:
+            self.last_shot = live
+            announce_shot(self._note, live)
         return live, packaged
 
     def fetch(self, url):
-        return _fetch_html(
+        result = _fetch_html(
             url, timeout=self._timeout, max_redirects=self._max_redirects
         )
+        # The picture of the live page, taken HERE rather than at packaging
+        # time. It used to ride along with the packaged one at the very end of
+        # the run, which meant the one engine most likely to be chosen for a
+        # quick capture was the one that showed nothing while it worked —
+        # Eric asked for the source on screen during creation and, on this
+        # engine, only ever got it as the job finished. Same single visit and
+        # the same total cost; it just happens at the start now. The first page
+        # only, so a crawl shows the site it was pointed at.
+        if self.last_shot is None:
+            session = self._picture_session() if self._can_take_pictures() else None
+            if session is not None:
+                self.last_shot = session.shoot_live(result[0])
+                announce_shot(self._note, self.last_shot)
+        return result
+
+    # No browser here, so no media query to flip and no second face to keep.
+    other_face = None
+
+    def render_other(self, html, final_url, resources=None):
+        return ""
 
     def render(self, target, html, final_url, resolve_link=None):
         import time as _time
@@ -2238,6 +2381,9 @@ def create_page_zim(
             note(f"packaging {final_url}")
             creator.add_item(static_cls("A/index", zim_title, page.encode("utf-8")))
             creator.set_mainpath("A/index")
+            faces = _store_other_face(
+                creator, static_cls, capture, zim_title, final_url, note
+            )
             pictures = _store_pictures(creator, capture, page, final_url, note)
             add_standard_metadata(
                 creator,
@@ -2642,6 +2788,7 @@ def probe_page(
         "language": language,
         "language_source": language_source,
         "spa": looks_like_spa(page),
+        "app": looks_like_app(page),
         "bytes": nbytes,
         "assets": len(assets),
         "icon": _probe_icon_data_uri(final_url, timeout, page),
@@ -2816,7 +2963,13 @@ def probe_folder(
 
 def _note(message):
     """Progress for the CLI: one line, flushed, so a forty-minute crawl looks
-    alive in a terminal and in a piped log alike."""
+    alive in a terminal and in a piped log alike.
+
+    Events are for the surfaces that can draw them. A terminal cannot draw a
+    picture of the page, and printing the event would put its JPEG on the
+    screen, so anything that is not a sentence is skipped here."""
+    if isinstance(message, dict):
+        return
     print(message, flush=True)
 
 

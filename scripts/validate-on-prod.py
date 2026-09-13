@@ -239,7 +239,10 @@ def main():
         # invert filter. A captured site keeps its own colours; every picture
         # still paints.
         dark_ctx = browser.new_context(
-            viewport=PHONE, extra_http_headers=HDR, device_scale_factor=2, color_scheme="dark"
+            viewport=PHONE,
+            extra_http_headers=HDR,
+            device_scale_factor=2,
+            color_scheme="dark",
         )
         dark_ctx.add_init_script(STANDALONE_SHIM)
         dpage = dark_ctx.new_page()
@@ -247,7 +250,9 @@ def main():
         dpage.screenshot(path="/tmp/validate-cnn-dark.png")
         verdict(
             "dark mode, the way Eric's phone opens it",
-            (not dfacts["darken"]) and dfacts["painted"] == dfacts["imgs"] and dfacts["topbars"] == 1,
+            (not dfacts["darken"])
+            and dfacts["painted"] == dfacts["imgs"]
+            and dfacts["topbars"] == 1,
             f"invert filter {'ON' if dfacts['darken'] else 'off'}, page body {dfacts['bodyBg']}, "
             f"images {dfacts['painted']}/{dfacts['imgs']}, load {dt_load:.1f}s, painted {dt_all:.1f}s",
         )

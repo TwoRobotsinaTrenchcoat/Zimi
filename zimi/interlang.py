@@ -790,20 +790,30 @@ def _check_one_article_for_qid(zim_path):
 
 
 def _persist_qid_flags(qid_flags):
-    """Persist has_qids flags into the disk cache (cache.json).
+    """Persist has_qids flags into the disk cache, merged with everyone else's.
 
-    Reads the cache, merges has_qids into each file entry by matching on
-    the 'name' field, then saves atomically.
+    Through the shared read-modify-write, not straight at the file. This used
+    to open cache.json itself, merge its own field and write the whole thing
+    back — which meant it could land on top of a shape or a provenance record
+    saved a moment earlier and erase it, and be erased the same way. Going
+    through the same door as the other writers is what makes "merge" true.
+
+    It also stops bypassing the cache's version check: reading the raw file
+    would happily merge into a format this build no longer understands and
+    write it back out.
     """
-    try:
-        with open(_srv._cache_file_path(), encoding="utf-8") as f:
-            data = json.load(f)
-        files = data.get("files", {})
-        for _filename, meta in files.items():
+
+    def _apply(files):
+        touched = False
+        for meta in files.values():
             name = meta.get("name", "")
             if name in qid_flags:
                 meta["has_qids"] = qid_flags[name]
-        _srv._atomic_write_json(_srv._cache_file_path(), data, indent=2)
+                touched = True
+        return touched
+
+    try:
+        _srv._update_disk_cache(_apply)
     except Exception as e:
         log.warning("Failed to persist Q-ID flags to cache: %s", e)
 

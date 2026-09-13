@@ -3460,28 +3460,29 @@ function _initTzClock(now) {
   var pillsEl = document.getElementById('almanac-tz-pills');
   if (!pillsEl) return;
 
-  // Highlight the card for the user's (or selected) timezone. Match the
-  // exact IANA zone first; otherwise the card sharing its current UTC offset
-  // — a resolved zone like Europe/Berlin isn't a grid city, but it lines up
-  // with the +2 column (Paris), so the right column still lights up.
-  var userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  var targetTz = _almSelectedTz || userTz;
-  var targetOff = null;
-  try { targetOff = _tzUtcOffsetMin(targetTz, now); } catch (e) {}
-  var localMatch = -1;
-  for (var i = 0; i < _TZ_CITIES.length; i++) {
-    if (_TZ_CITIES[i].tz === targetTz) { localMatch = i; break; }
-  }
-  if (localMatch === -1 && targetOff !== null) {
-    for (var i = 0; i < _TZ_CITIES.length; i++) {
-      try { if (_tzUtcOffsetMin(_TZ_CITIES[i].tz, now) === targetOff) { localMatch = i; break; } } catch (e) {}
-    }
+  // Highlight the card for the user's (or selected) timezone.
+  var targetTz = _almSelectedTz || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  var localMatch = _almTzCardMatch(targetTz, now);
+
+  var cards = _TZ_CITIES.map(function(c, i) {
+    return { tz: c.tz, label: t('alm_city_' + c.key), idx: i };
+  });
+  // Off the tour entirely: it gets a card of its own. Inserted where its clock
+  // belongs rather than shoved to the front — the row reads west to east, and a
+  // +8:45 card sitting to the left of Honolulu makes the whole line nonsense
+  // (Eric: "when we pop the custom one in be sure to put it in the right
+  // position"). See _almTzCardMatch for why -1 happens at all.
+  if (localMatch === -1) {
+    localMatch = _almTzInsertAt(targetTz, now);
+    cards.splice(localMatch, 0, {
+      tz: targetTz, label: _almTzCardLabel(targetTz), idx: -1,
+    });
   }
 
   // Render city cards with times
   var html = '';
-  for (var i = 0; i < _TZ_CITIES.length; i++) {
-    var tzc = _TZ_CITIES[i];
+  for (var i = 0; i < cards.length; i++) {
+    var tzc = cards[i];
     var isActive = (i === localMatch);
     var tzTime = '';
     try { tzTime = _tzFmt(tzc.tz, { hour: 'numeric', minute: '2-digit', hour12: true }).format(now); } catch(e) { continue; }
@@ -3513,9 +3514,9 @@ function _initTzClock(now) {
     var glyphHtml = phase === 'night'
       ? '<span class="alm-tz-glyph alm-glyph-moon" aria-hidden="true"></span>'
       : '<span class="alm-tz-glyph" aria-hidden="true">\u2600\ufe0e</span>';
-    html += '<div class="alm-tz-city-card alm-tz-' + phase + (isActive ? ' alm-tz-city-active' : '') + '" onclick="_almSelectTz(\'' + tzc.tz + '\',' + i + ')">';
+    html += '<div class="alm-tz-city-card alm-tz-' + phase + (isActive ? ' alm-tz-city-active' : '') + '" onclick="_almSelectTz(\'' + tzc.tz + '\',' + tzc.idx + ')">';
     html += glyphHtml;
-    html += '<span class="alm-tz-city-name">' + t('alm_city_' + tzc.key) + '</span>';
+    html += '<span class="alm-tz-city-name">' + _almEsc(tzc.label) + '</span>';
     html += '<span class="alm-tz-city-time">' + tzTime + '</span>';
     html += '<span class="alm-tz-city-offset">' + utcOff + '</span>';
     html += '</div>';
@@ -3526,13 +3527,71 @@ function _initTzClock(now) {
   _drawTzClock(now);
 }
 
+// Which of the curated world-clock cards a zone lights, or -1 for none.
+//
+// The exact IANA zone first; failing that, the first card sharing its current
+// UTC offset — a resolved zone like Europe/Berlin is not a grid city, but it
+// lines up with the +2 column (Paris), so the right column still lights.
+//
+// -1 is a real answer, not a failure. The 28 cards are a curated world tour,
+// not a list of every zone, and the offset fallback only covers zones that
+// share an offset with one of them. A fractional zone shares its offset with
+// nothing here: click Eucla (+8:45) or Chatham (+12:45) on the map and every
+// card used to stay dark, which reads as "the click did nothing". The caller
+// answers -1 by giving that zone a card of its own.
+function _almTzCardMatch(targetTz, now) {
+  for (var i = 0; i < _TZ_CITIES.length; i++) {
+    if (_TZ_CITIES[i].tz === targetTz) return i;
+  }
+  var targetOff = null;
+  try { targetOff = _tzUtcOffsetMin(targetTz, now); } catch (e) { return -1; }
+  if (targetOff === null) return -1;
+  for (var i = 0; i < _TZ_CITIES.length; i++) {
+    try { if (_tzUtcOffsetMin(_TZ_CITIES[i].tz, now) === targetOff) return i; } catch (e) {}
+  }
+  return -1;
+}
+
+// Where an off-tour zone's card goes in the row: before the first curated city
+// whose clock is ahead of it, or last when nothing is.
+//
+// By measured offset, not by guessing from the table's order, because the two
+// can disagree — the row is written west to east but DST moves cities past each
+// other twice a year, and a fractional zone sits BETWEEN two of them by
+// definition. A zone whose offset cannot be read goes last rather than
+// somewhere wrong.
+function _almTzInsertAt(tz, now) {
+  var mine = null;
+  try { mine = _tzUtcOffsetMin(tz, now); } catch (e) { return _TZ_CITIES.length; }
+  if (mine === null) return _TZ_CITIES.length;
+  for (var i = 0; i < _TZ_CITIES.length; i++) {
+    var other = null;
+    try { other = _tzUtcOffsetMin(_TZ_CITIES[i].tz, now); } catch (e) { continue; }
+    if (other !== null && other > mine) return i;
+  }
+  return _TZ_CITIES.length;
+}
+
+// The name on a card for a zone that is not one of the curated cities: the
+// place the person actually picked, trimmed to its first part ("Eucla, Western
+// Australia, Australia" is a card label, not a paragraph), falling back to the
+// IANA zone's own city segment when nothing was named.
+function _almTzCardLabel(tz) {
+  var name = (_getLocation().name || '').split(',')[0].trim();
+  if (name) return name;
+  var seg = String(tz || '').split('/').pop() || tz || '';
+  return seg.replace(/_/g, ' ');
+}
+
 function _almSelectTz(tz, idx) {
   // Clicking a world-clock city re-homes the almanac there: it drives the
   // analog preview clock AND sets the page location through the same setter the
   // sun-map picker uses, so the header clock, sun times, holidays and sky all
   // follow to that city.
   _almSelectedTz = tz;
-  var city = _TZ_CITIES[idx];
+  // idx -1 is the card for the already-chosen place: it is where we are, so
+  // there is nothing to re-home to.
+  var city = idx >= 0 ? _TZ_CITIES[idx] : null;
   if (city) {
     _saveLocation(city.lat, city.lon, t('alm_city_' + city.key));
     _almRepaintFocus();   // location-only refresh, preserves scroll
@@ -6983,8 +7042,8 @@ async function _renderRosettaStone(now) {
 
   // Inscription pills (top row). The active pill doubles as the encyclopedia
   // link: a second tap on it opens the article (same closed-set Q-ID open the
-  // old in-body title link used). The underline + tooltip affordance appears
-  // only when the curated Q-ID actually resolved to an installed article.
+  // old in-body title link used). The tooltip, and an underline on hover,
+  // appear only when the curated Q-ID resolved to an installed article.
   var html = '<div class="rosetta-pills">';
   for (var si = 0; si < manifest.length; si++) {
     var isSel = si === _rosettaTextIdx;

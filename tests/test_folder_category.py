@@ -237,6 +237,10 @@ def test_disk_cache_record_gains_no_new_keys(zim_dir):
         "first_seen",
         "updated_at",
         "has_qids",
+        # Both of the site's faces, when a capture kept them. Written only for
+        # those, and read with .get() everywhere — an older Zimi that has never
+        # heard of it simply ignores the key, which is what this test is for.
+        "faces",
     }
     assert set(written) <= known
 

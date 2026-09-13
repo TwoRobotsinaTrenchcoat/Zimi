@@ -76,7 +76,9 @@ def test_fast_engine_carries_a_body_background():
     # A same-origin relative ref goes through the source reader, which this
     # carrier does not have; the absolute form takes the remote road, which is
     # the one a cross-origin picture takes on the create path.
-    out = c.rewrite_media("z", "A/index", f'<body bgcolor="#000000" background="{STARS}">')
+    out = c.rewrite_media(
+        "z", "A/index", f'<body bgcolor="#000000" background="{STARS}">'
+    )
     assert len(added) == 1, added
     carried_path = added[0][0]
     # A remote picture lands under a content-addressed name, as every remote

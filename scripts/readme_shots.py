@@ -77,7 +77,11 @@ def shot_language(page, base, out, query, source):
     page.wait_for_selector(".result", timeout=30000)
     _settle(page)
     # The list re-renders as sources answer; take the element after it settles.
-    hit = page.locator(".result").filter(has_text=source).first if source else page.locator(".result").first
+    hit = (
+        page.locator(".result").filter(has_text=source).first
+        if source
+        else page.locator(".result").first
+    )
     hit.click()
     page.wait_for_selector("iframe", timeout=30000)
     _settle(page, 2500)
@@ -88,7 +92,9 @@ def shot_language(page, base, out, query, source):
     try:
         page.wait_for_selector(".ld-interlang", timeout=30000)
     except Exception:
-        print("language-dropdown: no translation markers (is another language's Wikipedia installed?)")
+        print(
+            "language-dropdown: no translation markers (is another language's Wikipedia installed?)"
+        )
     page.wait_for_timeout(600)
     page.screenshot(path=str(out / "language-dropdown.png"))
 
@@ -161,8 +167,16 @@ def main():
     ap.add_argument(
         "--only", default="", help="comma-separated subset of: " + ", ".join(SHOTS)
     )
-    ap.add_argument("--tiles", action="store_true", help="homepage in tile view instead of list view")
-    ap.add_argument("--favorites", default="", help="comma-separated ZIM names to star before the homepage shot")
+    ap.add_argument(
+        "--tiles",
+        action="store_true",
+        help="homepage in tile view instead of list view",
+    )
+    ap.add_argument(
+        "--favorites",
+        default="",
+        help="comma-separated ZIM names to star before the homepage shot",
+    )
     ap.add_argument("--query", default="water purification")
     ap.add_argument(
         "--article",
@@ -199,7 +213,13 @@ def main():
         for name in want:
             t0 = time.time()
             if name == "homepage":
-                shot_homepage(page, args.base, out, [f for f in args.favorites.split(',') if f], args.tiles)
+                shot_homepage(
+                    page,
+                    args.base,
+                    out,
+                    [f for f in args.favorites.split(",") if f],
+                    args.tiles,
+                )
             elif name == "search":
                 shot_search(page, args.base, out, args.query)
             elif name == "language-dropdown":

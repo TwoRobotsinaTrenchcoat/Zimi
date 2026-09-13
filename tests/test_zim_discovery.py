@@ -280,7 +280,9 @@ def test_scan_skips_quarantine_eadir_and_nozim(scan_dir):
     quarantines hold files pulled OUT of service, @eaDir is Synology junk,
     and .nozim is the documented opt-out for staging/archive folders."""
     _touch_zim(scan_dir, "good_en_all_2026-01.zim", size=4)
-    _touch_zim(os.path.join(scan_dir, "corrupt-quarantine"), "bad_en_all_2026-01.zim", size=64)
+    _touch_zim(
+        os.path.join(scan_dir, "corrupt-quarantine"), "bad_en_all_2026-01.zim", size=64
+    )
     _touch_zim(os.path.join(scan_dir, "@eaDir"), "junk_en_all_2026-01.zim", size=4)
     _touch_zim(os.path.join(scan_dir, "archive"), "old_en_all_2026-01.zim", size=4)
     open(os.path.join(scan_dir, "archive", ".nozim"), "w").close()
@@ -459,6 +461,8 @@ def test_scan_collision_root_mini_still_beats_subfolder_maxi(scan_dir):
     """Tier outranks richness: the operator pulled that maxi out of the root
     for a reason — a subfolder copy never displaces the served root file."""
     _touch_zim(scan_dir, "wikipedia_fr_all_mini_2026-01.zim", size=4)
-    _touch_zim(os.path.join(scan_dir, "old"), "wikipedia_fr_all_maxi_2026-07.zim", size=64)
+    _touch_zim(
+        os.path.join(scan_dir, "old"), "wikipedia_fr_all_maxi_2026-07.zim", size=64
+    )
     zims = server._scan_zim_files()
     assert zims["wikipedia_fr"].endswith("mini_2026-01.zim")

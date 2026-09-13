@@ -55,19 +55,28 @@ class TestARemoteStylesheetIsCarried(unittest.TestCase):
         self.assertNotIn("../img/bg.png", css)
         self.assertNotIn("fonts/a.woff2", css)
         self.assertEqual(css.count("url("), 3)
-        self.assertIn("url(data:image/png;base64,AAAA)", css, "a data URI is left exactly alone")
+        self.assertIn(
+            "url(data:image/png;base64,AAAA)", css, "a data URI is left exactly alone"
+        )
         for p, m, _d in self.added:
             if m != "text/css":
-                self.assertIn("url(" + os.path.basename(p) + ")", css.replace("'", ""), css)
+                self.assertIn(
+                    "url(" + os.path.basename(p) + ")", css.replace("'", ""), css
+                )
 
     def test_a_protocol_relative_sheet_is_carried_too(self):
         page = '<link rel="stylesheet" href="//cdnjs.cloudflare.com/x/github-gist.min.css">'
         out = _carry_stylesheets(self.carrier, "lbl", "https://cheatography.com/", page)
         self.assertIn('href="../_assets/_remote/', out)
-        self.assertEqual(sorted(m for _p, m, _d in self.added), ["font/woff2", "image/png", "text/css"])
+        self.assertEqual(
+            sorted(m for _p, m, _d in self.added),
+            ["font/woff2", "image/png", "text/css"],
+        )
 
     def test_without_a_remote_reader_nothing_changes(self):
-        c = _AssetCarrier(self.added.append, lambda p, m, d: (p, m, d), lambda z, r: None)
+        c = _AssetCarrier(
+            self.added.append, lambda p, m, d: (p, m, d), lambda z, r: None
+        )
         page = '<link rel="stylesheet" href="https://cdn.example/a.css">'
         self.assertEqual(_carry_stylesheets(c, "lbl", "https://e.com/", page), page)
 
@@ -121,11 +130,21 @@ class TestAQueryStringStylesheetIsCarried(unittest.TestCase):
             return (b"body{color:red}", "text/css")
 
         c = _AssetCarrier(
-            lambda i: None, lambda p, m, d: (p, m, d), lambda z, r: None,
-            remote_reader=remote, page_url="https://en.wikipedia.org/wiki/Water_purification",
+            lambda i: None,
+            lambda p, m, d: (p, m, d),
+            lambda z, r: None,
+            remote_reader=remote,
+            page_url="https://en.wikipedia.org/wiki/Water_purification",
         )
         page = '<link rel="stylesheet" href="/w/load.php?lang=en&amp;modules=site.styles&amp;only=styles&amp;skin=vector-2022">'
-        out = _carry_stylesheets(c, "lbl", "https://en.wikipedia.org/wiki/Water_purification", page)
-        self.assertEqual(asked, ["https://en.wikipedia.org/w/load.php?lang=en&modules=site.styles&only=styles&skin=vector-2022"])
+        out = _carry_stylesheets(
+            c, "lbl", "https://en.wikipedia.org/wiki/Water_purification", page
+        )
+        self.assertEqual(
+            asked,
+            [
+                "https://en.wikipedia.org/w/load.php?lang=en&modules=site.styles&only=styles&skin=vector-2022"
+            ],
+        )
         self.assertIn('href="../_assets/_remote/', out)
         self.assertNotIn("load.php", out)

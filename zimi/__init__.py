@@ -18,10 +18,17 @@ import importlib
 _server = importlib.import_module("zimi.server")
 
 # Attributes that belong to the package, not to zimi.server
-_PACKAGE_ATTRS = frozenset({
-    "__name__", "__package__", "__path__", "__file__",
-    "__spec__", "__loader__", "__doc__",
-})
+_PACKAGE_ATTRS = frozenset(
+    {
+        "__name__",
+        "__package__",
+        "__path__",
+        "__file__",
+        "__spec__",
+        "__loader__",
+        "__doc__",
+    }
+)
 
 
 class _ZimiProxy(types.ModuleType):

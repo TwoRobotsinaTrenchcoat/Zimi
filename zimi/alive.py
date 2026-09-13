@@ -70,8 +70,9 @@ from zimi.creator import (
     resolve_language,
     scratch_dir,
 )
+from zimi import zimpatch
 from zimi.warc import WarcWriter
-from zimi.zimwriter import _slug, scraper_string
+from zimi.zimwriter import _slug, announce_shot, scraper_string, shot_verdict
 
 log = logging.getLogger("zimi.alive")
 
@@ -164,7 +165,6 @@ class AliveCapture:
 
     keeps_scripts = True
 
-
     name = ENGINE_NAME
     # Recording an application shell is the point — its scripts are what the
     # archive is for.
@@ -256,6 +256,9 @@ class AliveCapture:
     def blocklist(self):
         return self._session.blocklist
 
+    # The live page, photographed during the recording pass. None until then.
+    last_shot = None
+
     # -- the engine interface ---------------------------------------------
     def start(self):
         if not self._started:
@@ -275,6 +278,19 @@ class AliveCapture:
         present here."""
         self.start()
         page = self._session.capture(url)
+        # The recording pass photographs the live page like every other engine.
+        # Kept here because the ZIM this capture ends in is written by warc2zim,
+        # which cannot carry it.
+        #
+        # The FIRST page only. A crawl calls this for every URL in the
+        # frontier, so assigning each time left the "live page" picture showing
+        # whichever page the crawl happened to end on, while the packaged
+        # picture is the site's front page — two unrelated pages presented as
+        # before and after, and a height comparison between them that could
+        # warn about a collapse that never happened.
+        if self.last_shot is None:
+            self.last_shot = getattr(page, "shot", None)
+            announce_shot(self._note, self.last_shot)
         # Nothing was spooled — the recorder path collects no resources — but
         # discarding is what makes that a fact rather than an assumption.
         page.discard()
@@ -329,6 +345,61 @@ def _convert(archive, out, *, zim_name, note, **fields):
     note("converting the recording into a ZIM…")
     convert_archive(archive, out, zim_name=zim_name, sink=note, **fields)
     return out
+
+
+def finish_zim(out, *, seed_url, pages, assets, live_shot, note=None):
+    """Put into the ZIM what only this capture could know.
+
+    warc2zim wrote the file and takes no arbitrary metadata, so this is where
+    Zimi's side of the capture lands: which entries are pages (the field every
+    viewer reads for that, which the converter can only guess at), the source
+    URL it parses and never writes, the capture record, and the two pictures.
+
+    The packaged picture is taken here and not earlier, because the page as
+    the ZIM serves it does not exist until the ZIM does.
+
+    Never raises. A capture that succeeded is not lost to an enrichment step:
+    on any trouble the file stays exactly as the converter wrote it."""
+    say = note or (lambda _m: None)
+    record = zimpatch.build_record(
+        seed_url=seed_url, engine=ENGINE_NAME, pages=pages, assets=assets
+    )
+
+    # The picture is taken DURING the rewrite, from the document the rewrite is
+    # about to write. warc2zim's own HTML does not run — its script references
+    # are relative, and a module loader that identifies chunks by the src the
+    # server sent cannot find them — so photographing the converter's output
+    # produced a picture of an empty shell, and a "much shorter than the live
+    # one" warning about a ZIM that renders perfectly once opened.
+    taken = {}
+
+    def shoot(html, by_path, mainpath):
+        try:
+            from zimi.renderer import RenderedSession
+
+            with RenderedSession(note=lambda _m: None) as session:
+                taken["shot"] = session.shoot_packaged(
+                    html, by_path, mainpath=mainpath, settle=True
+                )
+        except Exception as e:
+            log.debug("no packaged picture for %s: %s", out, e)
+        return taken.get("shot")
+
+    patched = zimpatch.patch(out, record, live_shot=live_shot, shoot=shoot, note=say)
+    packaged = taken.get("shot")
+    if patched and packaged and live_shot:
+        _, short = shot_verdict(live_shot, packaged)
+        if short:
+            say(
+                "warning: the packaged page is much shorter than the live one, "
+                "so something did not survive capture. Compare the two "
+                "pictures in About."
+            )
+    return {
+        "live": bool(patched and live_shot),
+        "zim": bool(patched and packaged),
+        "recorded": bool(patched),
+    }
 
 
 def _shelf_icon(url, zim_name):
@@ -438,6 +509,7 @@ def create_alive_page_zim(
     )
     out = None
     blocked = {}
+    pictures = {"live": False, "zim": False}
     try:
         note(f"fetching {url}")
         final_url, html, _n, clang = capture.fetch(url)
@@ -467,6 +539,14 @@ def create_alive_page_zim(
             creator_name=creator_name,
             source=final_url,
         )
+        pictures = finish_zim(
+            out,
+            seed_url=final_url,
+            pages=[{"url": final_url, "title": zim_title}],
+            assets=capture.count,
+            live_shot=capture.last_shot,
+            note=note,
+        )
     except BaseException:
         capture.discard()
         raise
@@ -484,6 +564,7 @@ def create_alive_page_zim(
         "engine": ENGINE_NAME,
         "language": language,
         "language_source": language_source,
+        "pictures": pictures,
         **blocked,
     }
 
@@ -590,6 +671,7 @@ def create_alive_site_zim(
     spool_dir = None
     out = None
     blocked = {}
+    pictures = {"live": False, "zim": False}
     pages, reason = [], None
     try:
         seed_id = normalize_url(url)
@@ -652,6 +734,20 @@ def create_alive_site_zim(
                 creator_name=creator_name,
                 source=seed_url,
             )
+            # The seed page's live picture, taken on the first fetch of the
+            # crawl, beside a picture of the site's front page as the ZIM
+            # serves it.
+            pictures = finish_zim(
+                out,
+                seed_url=seed_url,
+                pages=[
+                    {"url": p.get("final_url") or "", "title": p.get("title") or ""}
+                    for p in pages
+                ],
+                assets=capture.count,
+                live_shot=capture.last_shot,
+                note=note,
+            )
     except BaseException:
         capture.discard()
         raise
@@ -673,6 +769,7 @@ def create_alive_site_zim(
         "stopped": reason,
         "language": language,
         "language_source": language_source,
+        "pictures": pictures,
         **blocked,
     }
 

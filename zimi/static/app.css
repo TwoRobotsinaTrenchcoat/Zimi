@@ -747,8 +747,16 @@
   .create-phases { display: flex; align-items: flex-start; }
   .create-step { flex: 1 1 0; position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text3); text-align: center; }
   /* The rail between two steps belongs to the one on the right, which is what
-     lets the step on its LEFT light it with a sibling selector. */
-  .create-step + .create-step::before { content: ""; position: absolute; top: 5px; left: -50%; right: 50%; height: 1px; background: var(--border); }
+     lets the step on its LEFT light it with a sibling selector.
+     It runs BETWEEN the dots, not through them. Spanning centre-to-centre put
+     the line under each dot and out the other side, and the dot's fill is not
+     the page's, so what showed was a line ending halfway into a circle (Eric:
+     "the line is half way through the first step, looks bad"). The inset is
+     the dot's radius plus a little air. */
+  .create-step + .create-step::before {
+    content: ""; position: absolute; top: 5px; height: 1px; background: var(--border);
+    left: calc(-50% + 11px); right: calc(50% + 11px);
+  }
   .create-step[data-state="done"] + .create-step::before { background: var(--amber-border); }
   .create-step-dot { position: relative; z-index: 1; width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface2); }
   .create-step[data-state="done"] { color: var(--text2); }
@@ -1059,11 +1067,16 @@
   /* The view toggle's own glyphs sit visually heavier than plain heading text,
      so the shared 10px cat-heading bottom margin reads tight against the grid
      below it — nudge just this variant down by one 4px-grid step. */
-  .cat-heading.has-view-toggle { position: relative; padding-inline-end: 74px; margin-bottom: 18px; }
-  .cat-heading .lib-view-toggle {
+  .cat-heading.has-view-toggle { position: relative; padding-inline-end: 210px; margin-bottom: 18px; }
+  /* Order and view sit together at the end of the first section header: both
+     answer "how do I want to look at my library", so they share one line and
+     one anchor rather than each taking their own. */
+  .cat-heading .lib-controls {
     position: absolute; inset-inline-end: 0; top: 50%; transform: translateY(-50%);
+    display: flex; align-items: center; gap: 8px;
     -webkit-text-fill-color: initial;
   }
+  .cat-heading .lib-view-toggle { -webkit-text-fill-color: initial; }
 
   /* ── Source header ── */
   .source-header { display: flex; gap: 16px; align-items: flex-start; padding: 4px 0 24px; }
@@ -1501,6 +1514,11 @@
   .cr-made-th { font-weight: 500; color: var(--text2); cursor: pointer; user-select: none; }
   .cr-made-th:hover { color: var(--amber); }
   .cr-made-name { color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  /* The name is a link, and an unstyled one gets the browser's blue and an
+     underline — the only place in the app that happened. It reads as ordinary
+     text and answers to the pointer the way the sortable headers beside it do. */
+  .cr-made-name a { color: inherit; text-decoration: none; }
+  .cr-made-name a:hover, .cr-made-name a:focus-visible { color: var(--amber); }
   .cr-made-num { font-variant-numeric: tabular-nums; color: var(--text2); }
   /* Auto-fit grid for catalog + downloads. 320px min → 2 columns in the
      manage pane (~790px wide), 3 on wide screens, 1 on mobile. Cards switch
@@ -2441,6 +2459,11 @@
 
   /* ── Card category badge (inline in detail row) ── */
   .card-cat { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+  /* The age the list is currently ordered by. Deliberately the same colour as
+     the rest of the detail line: it is one more fact about the file, not a
+     highlight, and amber here read as a warning (Eric: "don't love that the
+     age is yellow"). Tabular figures so a column of ages lines up. */
+  .card-when { font-variant-numeric: tabular-nums; }
   .lang-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 5px; margin-left: 6px; border-radius: 4px; background: var(--surface2); color: var(--text2); vertical-align: middle; letter-spacing: 0.06em; }
   .lang-badge.multi { background: var(--amber-glow); color: var(--amber); border: 1px solid var(--amber-border); }
   /* Downloads/seeds row chip: distinguishes identically-titled transfers. */
@@ -2910,9 +2933,14 @@
   .dc-dismiss { background: none; border: none; color: var(--text2); font-size: 16px; cursor: pointer; padding: 0 4px; opacity: 0.4; transition: opacity 0.2s; line-height: 1; }
   .dc-dismiss:hover { opacity: 1; color: var(--text); }
   .discover-scroll { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding: 8px 2px; margin: -8px -2px; will-change: transform; }
-  .discover-scroll::-webkit-scrollbar { height: 4px; }
-  .discover-scroll::-webkit-scrollbar-track { background: transparent; }
-  .discover-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  /* No scrollbar under the strip. The thumb was a short line reaching about
+     halfway across, sitting under the cards and reading as an artefact rather
+     than a control (Eric: "would be nice to have it be solid so I can't see
+     it"). The row snap-scrolls and its next card is always cut off at the
+     edge, which is what actually says "there is more" — the bar said it a
+     second time, worse. */
+  .discover-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+  .discover-scroll::-webkit-scrollbar { height: 0; width: 0; }
   .discover-card {
     flex: 0 0 260px; min-height: 200px; max-height: 320px; scroll-snap-align: start;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -3073,6 +3101,22 @@
   background: var(--panel, rgba(255,255,255,0.04));
 }
 
+/* The live page, while its capture runs. A full-page screenshot of a homepage
+   is twenty thousand pixels tall, so this shows the TOP of it at the width it
+   has — enough to recognise the page, never enough to push the progress strip
+   off the screen. object-position keeps that crop at the top rather than the
+   middle, which is where the interesting part of a page is. */
+.create-live-shot {
+  margin: 0 0 14px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--panel, rgba(255,255,255,0.04));
+}
+.create-live-shot img {
+  display: block; width: 100%; height: 180px;
+  object-fit: cover; object-position: top center;
+}
+@media (max-width: 560px) { .create-live-shot img { height: 120px; } }
+
 
 /* The two pictures a capture keeps, side by side on anything wide enough and
    stacked on a phone. Neither means much alone: the pair is the comparison. */
@@ -3128,3 +3172,28 @@
 }
 .create-shot:hover { border-color: var(--amber); }
 .create-shot:hover .create-shot-cap { color: var(--amber); }
+
+/* Why a control is disabled, beside the control rather than in a tooltip.
+   A greyed-out switch whose reason is hidden reads as broken (#69, #70). */
+.ms-hint.bt-why, .ms-hint.au-why {
+  margin-top: 4px;
+  max-width: 34ch;
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* The library order control, sharing the first section header's line with the
+   view toggle. Quiet until touched: it is a preference, not an action. */
+.lib-sort {
+  font-size: 12px;
+  padding: 3px 6px;
+  margin-right: 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text2);
+  cursor: pointer;
+  vertical-align: middle;
+  -webkit-text-fill-color: initial;
+}
+.lib-sort:hover, .lib-sort:focus-visible { color: var(--text); border-color: var(--amber-border); }

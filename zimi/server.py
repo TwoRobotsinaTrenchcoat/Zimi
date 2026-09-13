@@ -125,7 +125,7 @@ except ImportError:
 # SSL context using certifi CA bundle (PyInstaller bundles lack system certs)
 SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
-ZIMI_VERSION = "1.9.2"
+ZIMI_VERSION = "1.9.3"
 
 # Standing maintenance cadence: catalog TTL is 24h and UPnP leases are
 # 24h — run every 12h so both stay fresh at half-life.
@@ -389,12 +389,32 @@ def _shape_backfill():
     from zimi import zimwriter as _zw
 
     time.sleep(_SHAPE_SETTLE_SECONDS)
+    _provenance_warm()
     while True:
         try:
             _shape_backfill_pass(_zw)
         except Exception:
             log.debug("ZIM shape backfill pass failed", exc_info=True)
         time.sleep(_SHAPE_RETRY_SECONDS)
+
+
+def _provenance_warm():
+    """Answer "which ZIMs did Zimi make" once, here, rather than under an admin.
+
+    kind_store makes the answer survive a restart, but SOMEBODY still has to
+    pay for the first walk, and left alone that somebody is whoever opens
+    Manage -> Creator first after a deploy — which is the wait this was meant
+    to remove. A library whose cache already holds the answer costs nothing
+    here, so this is a one-off on a new install and free afterwards.
+
+    Runs on the shape worker's thread, after its settle, so it adds no thread
+    and nothing on the serving path waits for it."""
+    try:
+        from zimi import http as _http
+
+        _http._zim_kinds()
+    except Exception:
+        log.debug("provenance warm failed", exc_info=True)
 
 
 def _shape_backfill_pass(_zw):
@@ -432,6 +452,36 @@ def _shape_backfill_pass(_zw):
         log.info("measured what %d ZIM(s) are made of", done)
 
 
+# One writer at a time for the metadata cache.
+#
+# Four separate places read that file, change part of it and write the whole
+# thing back: the shape worker, the provenance walk, and registering or
+# unregistering a single ZIM. They run on different threads — the provenance
+# one from whichever request asked for it — so two of them interleaving means
+# the second save is built on a copy taken before the first, and the first's
+# work is simply gone.
+#
+# Losing a shape is not a cosmetic loss. The shape worker re-measures anything
+# without one, and measuring means walking every entry in the file; on a
+# 40 GB Wikipedia that is minutes of the global libzim lock, every quarter of
+# an hour, forever. Eric heard it as the NAS cranking and saw it as Manage ->
+# Creator never finishing, because the walk starves the request that would
+# have answered it.
+_disk_cache_lock = threading.RLock()
+
+
+def _update_disk_cache(mutate):
+    """Read the metadata cache, let ``mutate`` change it, write it back.
+
+    All of it under one lock, so a change is never built on a copy that has
+    since been superseded. ``mutate`` returns True when it changed anything;
+    an unchanged cache is not rewritten."""
+    with _disk_cache_lock:
+        disk = _load_disk_cache() or {}
+        if mutate(disk):
+            _save_disk_cache(disk)
+
+
 def _shape_store(measured):
     """Write the shapes into the live list and the disk cache, together.
 
@@ -442,16 +492,76 @@ def _shape_store(measured):
         shape = measured.get(entry.get("name"))
         if shape:
             entry["shape"] = shape
-    disk = _load_disk_cache() or {}
-    touched = False
+
+    def _apply(disk):
+        touched = False
+        for entry in _zim_list_cache or []:
+            shape = measured.get(entry.get("name"))
+            cached = disk.get(entry.get("file", ""))
+            if shape and isinstance(cached, dict):
+                cached["shape"] = shape
+                touched = True
+        return touched
+
+    _update_disk_cache(_apply)
+
+
+# Provenance survives a restart, because the walk that builds it does not.
+#
+# "Which ZIMs did Zimi make" is answered by opening each archive and reading
+# three metadata fields. The answer is memoized per process, so the walk is
+# free after the first one — and the first one is a read of every file in the
+# library, paid again on every restart. On a 73-ZIM NAS that is what made
+# Manage -> Creator's made-here list "super slow" every time (Eric,
+# 2026-09-11), because a deploy restarts the container.
+#
+# The answer is a property of the FILE, keyed by the same name-and-size
+# signature the memo uses, so it belongs in the cache beside every other fact
+# about that file. Same shape as _shape_store: the live list and the disk cache
+# together, or it is forgotten and recomputed forever.
+#
+# None is a real answer here and the common one — most ZIMs were published by
+# somebody else — so the record wraps it rather than storing it bare, and an
+# absent record means "not looked at yet" instead of "looked at, not ours".
+def zim_signature(name):
+    """``(mtime, size)`` for an installed ZIM, from the list cache, or None.
+
+    The file's identity, free: no stat, no archive open, no lock. Replacing a
+    ZIM or re-running a capture over the same filename changes it, which is
+    exactly the question a cached picture has to be able to ask."""
     for entry in _zim_list_cache or []:
-        shape = measured.get(entry.get("name"))
-        cached = disk.get(entry.get("file", ""))
-        if shape and isinstance(cached, dict):
-            cached["shape"] = shape
-            touched = True
-    if touched:
-        _save_disk_cache(disk)
+        if entry.get("name") == name:
+            mtime, size = entry.get("mtime"), entry.get("size_bytes")
+            if mtime is not None and size is not None:
+                return (mtime, size)
+            return None
+    return None
+
+
+def kind_store(records):
+    """Remember ``{name: {"file": ..., "sig": ..., "kind": ...}}``. One write.
+
+    Keyed off the filename each record carries rather than looked up in the
+    live list: the walk that produces these runs before the list cache exists
+    in some callers, and a store that quietly wrote nothing would look exactly
+    like a store that worked."""
+    if not records:
+        return
+    for entry in _zim_list_cache or []:
+        record = records.get(entry.get("name"))
+        if record:
+            entry["zimi_kind"] = record
+
+    def _apply(disk):
+        touched = False
+        for record in records.values():
+            cached = disk.get(record.get("file") or "")
+            if isinstance(cached, dict):
+                cached["zimi_kind"] = record
+                touched = True
+        return touched
+
+    _update_disk_cache(_apply)
 
 
 def _maintenance_pass():
@@ -1909,6 +2019,7 @@ _MASS_STAMP_MTIME_TOL = 3600.0  # first_seen must be within 1h of file mtime to 
 _zim_list_cache = None
 _zim_files_cache = None  # {name: path} — cached at startup, ZIM dir is read-only
 
+
 # ── Per-request ZIM allow context (multi-user v1) ────────────────────────────
 # When a named USER (not admin, not anonymous) is logged in, the request's ZIM
 class ZimiHTTPServer(ThreadingHTTPServer):
@@ -2312,6 +2423,29 @@ def _extract_zim_date(filename):
     return filename.replace(".zim", ""), None
 
 
+def _read_faces(archive):
+    """``{"main": scheme, "other": {...}}`` when a capture kept both of the
+    site's faces, else None. Never raises: a ZIM without it is every ZIM."""
+    if archive is None:
+        return None
+    try:
+        from zimi.creator import FACES_METADATA_KEY
+
+        raw = bytes(archive.get_metadata(FACES_METADATA_KEY))
+    except Exception:
+        return None
+    try:
+        faces = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    if not isinstance(faces, dict):
+        return None
+    other = faces.get("other")
+    if not isinstance(other, dict) or not other.get("path"):
+        return None
+    return faces
+
+
 def _extract_zim_metadata(name, path):
     """Open a ZIM archive and extract its metadata. Returns (info_dict, archive)."""
     size_bytes = os.path.getsize(path)
@@ -2405,6 +2539,13 @@ def _extract_zim_metadata(name, path):
         info["folder"] = folder
     if article_count is not None:
         info["article_count"] = article_count
+    # Both of the site's faces, when a capture kept them. Small, and it has to
+    # ride with the library list rather than the detail panel: the reader picks
+    # a face the moment an article is opened, and it cannot wait for a second
+    # request to find out there was a choice.
+    faces = _read_faces(archive)
+    if faces:
+        info["faces"] = faces
     # Additive flag: a ZIM Zimi itself exported (bookmark exports). The UI
     # shows these with their full creation date.
     if meta_creator == "Zimi":
@@ -2707,6 +2848,17 @@ def load_cache(force=False):
                 entry["folder"] = folder
             if "has_qids" in cached:
                 entry["has_qids"] = cached["has_qids"]
+            # Both of the site's faces, when a capture kept them. Cached like
+            # every other fact about the file: the reader needs it the instant
+            # an article is opened, and re-opening the archive to ask would put
+            # a disk read on the path this cache exists to keep clear.
+            if cached.get("faces"):
+                entry["faces"] = cached["faces"]
+            # Which ZIMs Zimi made, remembered rather than re-derived. See
+            # kind_store: without this the Creator pane reopens every archive
+            # in the library after each restart.
+            if cached.get("zimi_kind"):
+                entry["zimi_kind"] = cached["zimi_kind"]
             # Additive: real article count. Absent in caches built before this
             # field existed — the UI falls back to `entries` when it's missing.
             if cached.get("article_count") is not None:
@@ -2720,6 +2872,10 @@ def load_cache(force=False):
             # open without adding a read of every file to it.
             if cached.get("shape"):
                 entry["shape"] = cached["shape"]
+            # The file's own identity, carried on the entry. Small, and it is
+            # what lets a picture request be answered from the client's copy
+            # without opening the archive to find out — see _picture_etag.
+            entry["mtime"] = mtime
             info.append(entry)
             cached_out = dict(cached)
             if first_seen is not None:
@@ -2735,6 +2891,7 @@ def load_cache(force=False):
             if first_seen is not None:
                 entry["first_seen"] = first_seen
             entry["updated_at"] = updated_at
+            entry["mtime"] = mtime
             info.append(entry)
             scanned += 1
             new_cached = {
@@ -2754,6 +2911,11 @@ def load_cache(force=False):
                 new_cached["article_count"] = entry["article_count"]
             if entry.get("zimi_export"):
                 new_cached["zimi_export"] = True
+            # Only when the capture kept two: most ZIMs have one face, and a
+            # cache full of nulls is noise. An older Zimi reading this record
+            # ignores the key, which is what keeps a downgrade safe.
+            if entry.get("faces"):
+                new_cached["faces"] = entry["faces"]
             if first_seen is not None:
                 new_cached["first_seen"] = first_seen
             if updated_at is not None:
@@ -2774,7 +2936,10 @@ def load_cache(force=False):
     # Persist cache if we scanned anything new, backfilled a legacy first_seen
     # (so the mtime stamp is computed once), or repaired mass-stamped entries.
     if scanned > 0 or backfilled > 0 or disk_cache is None or healed or healed_updates:
-        _save_disk_cache(file_cache)
+        # Wholesale, not a merge — but under the same lock, so it cannot land
+        # in the middle of somebody else's read-modify-write.
+        with _disk_cache_lock:
+            _save_disk_cache(file_cache)
 
     cached_count = len(info) - scanned
     if cached_count > 0 and scanned > 0:
@@ -2822,7 +2987,7 @@ def load_cache(force=False):
     _build_domain_zim_map()
 
 
-def _domain_map_entries_for_zim(name, filename, source_meta):
+def _domain_map_entries_for_zim(name, filename, source_meta, main_path=""):
     """Domain→ZIM entries ONE ZIM contributes, without opening any archive.
 
     Mirrors the three discovery methods of interlang._build_domain_zim_map
@@ -2866,6 +3031,17 @@ def _domain_map_entries_for_zim(name, filename, source_meta):
                 _add(source_meta.split("/")[0])
         except Exception as e:
             log.debug("Failed to parse Source %r for %s: %s", source_meta, name, e)
+    elif main_path:
+        # A capture's main entry path IS the site's address
+        # ("draculatheme.com/contribute"), which is the discovery interlang
+        # calls 2b and this function was missing despite the docstring above
+        # promising the two are in sync. Without it a just-created capture
+        # registered under four invented domains — dracula.com, .org, .io,
+        # .net — and nothing linked to it until the next restart rebuilt the
+        # map properly.
+        host = (main_path or "").split("/", 1)[0]
+        if re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", host or ""):
+            _add(host)
     elif not name.startswith("zimgit") and "_en_" not in name:
         for tld in (".com", ".org", ".io", ".net"):
             _add(name + tld)
@@ -2969,6 +3145,13 @@ def register_zim_file(path, removed_files=()):
         )
     except Exception:
         source_meta = ""
+    # The capture's own address, for a ZIM warc2zim wrote: its main entry path
+    # is the site's address. Read on the same private handle, for the same
+    # reason.
+    try:
+        main_path = archive.main_entry.get_item().path
+    except Exception:
+        main_path = ""
 
     # New/Updated stamps, same semantics as load_cache: a new dated filename
     # of an already-known ZIM inherits the ORIGINAL first_seen and stamps
@@ -3039,13 +3222,14 @@ def register_zim_file(path, removed_files=()):
         # stamp inheritance, but a concurrent full load_cache (manage
         # refresh) may have rewritten the file since — mutate the freshest
         # version so its work isn't clobbered.
-        disk_now = _load_disk_cache()
-        if disk_now is not None:
+        def _apply(disk_now):
             for _fn in list(disk_now):
                 if _fn in removed or _zim_short_name(_fn) == name:
                     disk_now.pop(_fn, None)
             disk_now[filename] = new_cached
-            _save_disk_cache(disk_now)
+            return True
+
+        _update_disk_cache(_apply)
         # Domain map: merge ONLY this ZIM's domains. The full rebuild
         # (_build_domain_zim_map) opens every unmapped archive via
         # get_archive — with a cold pool (e.g. right after a previous
@@ -3057,7 +3241,9 @@ def register_zim_file(path, removed_files=()):
         import zimi.interlang as _interlang
 
         merged = dict(_interlang._domain_zim_map)
-        for _d, _n in _domain_map_entries_for_zim(name, filename, source_meta).items():
+        for _d, _n in _domain_map_entries_for_zim(
+            name, filename, source_meta, main_path
+        ).items():
             merged.setdefault(_d, _n)
         _interlang._domain_zim_map = merged
     log.info(
@@ -3168,15 +3354,15 @@ def unregister_zim_file(filename):
         _cache_generation += 1
         # Re-read under the lock: a concurrent load_cache may have rewritten
         # the file since phase 1, so mutate the freshest version.
-        disk_now = _load_disk_cache()
-        if disk_now is not None:
+        def _apply(disk_now):
             dropped = [
                 fn for fn in disk_now if fn in dead_files or _zim_short_name(fn) in gone
             ]
-            if dropped:
-                for fn in dropped:
-                    disk_now.pop(fn, None)
-                _save_disk_cache(disk_now)
+            for fn in dropped:
+                disk_now.pop(fn, None)
+            return bool(dropped)
+
+        _update_disk_cache(_apply)
         if gone:
             # Drop this ZIM's domain claims so _resolve_url_to_zim stops
             # answering with a name that no longer resolves. Rebound, not

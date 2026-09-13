@@ -33,6 +33,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import zimi.http as zhttp  # noqa: E402
 import zimi.server as server  # noqa: E402
 
 ZIM = "iconic"
@@ -145,14 +146,24 @@ class TestZimIconCache(unittest.TestCase):
 
     # ── revalidated, not assumed ───────────────────────────────────────────
 
-    def test_the_browser_is_told_to_ask(self):
+    def test_the_browser_is_told_to_ask_again_but_not_constantly(self):
         """`immutable` means "never ask again", which is only true of content
-        that cannot change. This can."""
+        that cannot change. This can — so the browser must come back.
+
+        It used to come back on EVERY render, because the window was max-age=0.
+        Correct, and ruinous: a library of seventy-four sources asked about
+        seventy-four icons on every sort, view toggle and revisit, and each ask
+        was answered by opening the archive under the global libzim lock. Eric,
+        2026-09-11: "icons disappear and redownload when i toggle compact or
+        full". A short window costs a bounded staleness — at most one window's
+        worth, on a picture — and buys back every one of those asks."""
         _s, headers, _b = self._get()
         cc = headers.get("Cache-Control", "")
         self.assertNotIn("immutable", cc)
         self.assertIn("must-revalidate", cc)
-        self.assertIn("max-age=0", cc)
+        self.assertIn("max-age=", cc)
+        self.assertNotIn("max-age=0", cc)
+        self.assertLessEqual(zhttp.ZimHandler.PICTURE_MAX_AGE, 300)
 
     def test_an_unchanged_icon_costs_an_empty_reply(self):
         """Correct and cheap: the ask is answered 304 with no body, so a home
